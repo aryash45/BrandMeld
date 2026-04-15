@@ -1,13 +1,12 @@
 /**
- * CreatePage — The primary content generation workspace.
+ * CreatePage — Stepped wizard layout.
  *
- * All state is managed through useContentGenerator and useBrandKit hooks,
- * keeping this page component as a thin composition layer.
- *
- * Accepts optional react-router navigation state ({ historyItem }) so the
- * DashboardPage "recent sessions" can pre-fill the workspace by navigating here.
+ * Three focused steps instead of a dense 3-column grid:
+ *   1. Brand Scan  — pull voice clues from a URL
+ *   2. Compose     — set voice, pick channels, write brief
+ *   3. Output      — view generated drafts + history
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useContentGenerator } from '../hooks/useContentGenerator';
@@ -24,22 +23,72 @@ import ImagePreview from '../components/ImagePreview';
 import PlatformSelector from '../components/PlatformSelector';
 import TextInput from '../components/TextInput';
 
-// ─── Small local helper ───────────────────────────────────────────────────────
+// ─── Step definitions ─────────────────────────────────────────────────────────
 
-interface TabButtonProps {
+type Step = 1 | 2 | 3;
+
+interface StepMeta {
+  id: Step;
   label: string;
-  isActive: boolean;
-  onClick: () => void;
+  kicker: string;
+  description: string;
 }
 
-const TabButton: React.FC<TabButtonProps> = ({ label, isActive, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`neon-chip rounded-full px-4 py-2 text-sm font-semibold ${isActive ? 'is-active' : ''}`}
-  >
-    {label}
-  </button>
+const STEPS: StepMeta[] = [
+  {
+    id: 1,
+    label: 'Brand Scan',
+    kicker: 'Signal Intake',
+    description: 'Pull voice cues from a company URL to build a reusable brand profile.',
+  },
+  {
+    id: 2,
+    label: 'Compose',
+    kicker: 'Composition Deck',
+    description: 'Set your voice blueprint, pick channels, and write your campaign brief.',
+  },
+  {
+    id: 3,
+    label: 'Output',
+    kicker: 'Draft Monitor',
+    description: 'Your generated drafts — ready to copy, edit, or revisit.',
+  },
+];
+
+// ─── Step indicator ───────────────────────────────────────────────────────────
+
+const StepBar: React.FC<{
+  current: Step;
+  onChange: (s: Step) => void;
+  outputUnlocked: boolean;
+}> = ({ current, onChange, outputUnlocked }) => (
+  <nav aria-label="Wizard steps" className="create-step-bar">
+    {STEPS.map((s, i) => {
+      const isActive = s.id === current;
+      const isDone = s.id < current;
+      const isLocked = s.id === 3 && !outputUnlocked;
+      return (
+        <React.Fragment key={s.id}>
+          <button
+            type="button"
+            disabled={isLocked}
+            onClick={() => !isLocked && onChange(s.id)}
+            className={[
+              'create-step-btn',
+              isActive ? 'is-active' : '',
+              isDone ? 'is-done' : '',
+              isLocked ? 'is-locked' : '',
+            ].join(' ')}
+            aria-current={isActive ? 'step' : undefined}
+          >
+            <span className="create-step-num">{isDone ? '✓' : s.id}</span>
+            <span className="create-step-label">{s.label}</span>
+          </button>
+          {i < STEPS.length - 1 && <span className="create-step-connector" />}
+        </React.Fragment>
+      );
+    })}
+  </nav>
 );
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -52,90 +101,77 @@ const CreatePage: React.FC = () => {
   const gen = useContentGenerator();
   const brandKitHook = useBrandKit();
 
-  // If we landed here from the Dashboard with a history item, pre-fill the workspace
+  const [step, setStep] = useState<Step>(1);
+
+  // Pre-fill workspace from dashboard "recent sessions" nav state
   useEffect(() => {
     const state = location.state as { historyItem?: HistoryItem } | null;
     if (state?.historyItem) {
       gen.loadHistoryItem(state.historyItem);
-      // Clear the navigation state so a re-render doesn't reload it again
+      setStep(3);
       window.history.replaceState({}, '');
     }
-    // Only fire on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const hasBatchResults = Object.keys(gen.batchResults).length > 0;
+  const outputUnlocked = hasBatchResults || gen.history.length > 0;
+
+  const meta = STEPS.find((s) => s.id === step)!;
 
   return (
-    <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mb-6 animate-fade-in">
+    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+      {/* Page header */}
+      <div className="mb-8 animate-fade-in">
         <p className="neon-kicker">Composition Deck</p>
         <h1 className="mt-3 font-display text-3xl font-bold text-white">
           Create in your voice
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-400 sm:text-base">
-          Scan a brand, pick your channels, and ship multi-platform content that sounds like you.
+          Three steps. One brand. Multi-platform content that sounds unmistakably like you.
         </p>
       </div>
 
-      <div className="dashboard-layout animate-fade-in">
-        {/* ── Left column: Brand scan + Image deck ── */}
-        <section className="flex flex-col gap-4">
-          {/* Brand scan */}
-          <div className="neon-panel px-5 py-5 sm:px-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="neon-kicker">Signal Intake</p>
-                <h2 className="mt-3 font-display text-2xl font-semibold text-white">
-                  Brand scan
-                </h2>
-                <p className="mt-3 text-sm leading-relaxed text-slate-400">
-                  Pull voice clues from a company or site, then convert them into a reusable brand profile.
-                </p>
-              </div>
-              <span className="status-orb mt-2 shrink-0" />
-            </div>
+      {/* Step bar */}
+      <StepBar current={step} onChange={setStep} outputUnlocked={outputUnlocked} />
 
-            <div className="mt-6">
-              <BrandAnalyzer
-                value={brandKitHook.analyzeUrl}
-                onChange={(e) => brandKitHook.setAnalyzeUrl(e.target.value)}
-                onAnalyze={() => brandKitHook.handleAnalyze(authToken)}
-                disabled={gen.isGenerating}
-                isAnalyzing={brandKitHook.isAnalyzing}
-              />
-            </div>
+      {/* Step panel */}
+      <div className="mt-6 animate-fade-in neon-panel px-6 py-7 sm:px-8">
+        {/* Step header */}
+        <div className="mb-6 border-b border-white/5 pb-6">
+          <p className="neon-kicker">{meta.kicker}</p>
+          <h2 className="mt-3 font-display text-2xl font-semibold text-white">{meta.label}</h2>
+          <p className="mt-2 text-sm leading-relaxed text-slate-400">{meta.description}</p>
+        </div>
+
+        {/* ── Step 1: Brand Scan ── */}
+        {step === 1 && (
+          <div className="space-y-6">
+            <BrandAnalyzer
+              value={brandKitHook.analyzeUrl}
+              onChange={(e) => brandKitHook.setAnalyzeUrl(e.target.value)}
+              onAnalyze={() => brandKitHook.handleAnalyze(authToken)}
+              disabled={gen.isGenerating}
+              isAnalyzing={brandKitHook.isAnalyzing}
+            />
 
             {brandKitHook.analyzeError && (
-              <p className="mt-4 text-sm text-rose-400">{brandKitHook.analyzeError}</p>
+              <p className="text-sm text-rose-400">{brandKitHook.analyzeError}</p>
             )}
 
             {brandKitHook.brandKit && (
-              <div className="mt-5">
+              <div>
                 <BrandKitCard brandKit={brandKitHook.brandKit} />
               </div>
             )}
-          </div>
 
-          {/* Image deck */}
-          <div className="neon-panel px-5 py-5 sm:px-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="neon-kicker">Visual Relay</p>
-                <h2 className="mt-3 font-display text-2xl font-semibold text-white">
-                  Image deck
-                </h2>
-                <p className="mt-3 text-sm leading-relaxed text-slate-400">
-                  Generate a companion visual using the active draft and the scanned brand palette.
+            {/* Image generation — lives inside Step 1 after scan */}
+            {brandKitHook.brandKit && (
+              <div className="rounded-2xl border border-white/5 bg-slate-950/30 px-5 py-5">
+                <p className="neon-kicker mb-3">Visual Relay</p>
+                <p className="mb-4 text-sm leading-relaxed text-slate-400">
+                  Generate a companion image from the scanned brand palette.
                 </p>
-              </div>
-              <span className="rounded-full border border-cyan-400/10 bg-cyan-400/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                {gen.canGenerateImage ? 'Ready' : 'Locked'}
-              </span>
-            </div>
-
-            {brandKitHook.brandKit ? (
-              <div className="mt-6">
                 <GenerateButton
                   onClick={() =>
                     brandKitHook.brandKit &&
@@ -146,81 +182,77 @@ const CreatePage: React.FC = () => {
                 >
                   Generate Image
                 </GenerateButton>
-              </div>
-            ) : (
-              <div className="mt-6 rounded-[22px] border border-white/5 bg-slate-950/30 px-4 py-4 text-sm leading-relaxed text-slate-500">
-                Run a brand scan first to unlock visual generation.
-              </div>
-            )}
-
-            {gen.generatedImage && (
-              <div className="mt-5">
-                <ImagePreview imageDataUrl={gen.generatedImage} />
+                {gen.generatedImage && (
+                  <div className="mt-5">
+                    <ImagePreview imageDataUrl={gen.generatedImage} />
+                  </div>
+                )}
+                {gen.imageError && (
+                  <p className="mt-3 text-sm text-rose-300">{gen.imageError}</p>
+                )}
               </div>
             )}
 
-            {gen.imageError && (
-              <p className="mt-4 text-sm leading-relaxed text-rose-300">{gen.imageError}</p>
-            )}
-          </div>
-        </section>
-
-        {/* ── Center column: Compose form ── */}
-        <section>
-          <div className="neon-panel px-5 py-5 sm:px-7 sm:py-6">
-            <div className="flex flex-col gap-4 border-b border-white/5 pb-6 sm:flex-row sm:items-start sm:justify-between">
-              <div className="max-w-2xl">
-                <p className="neon-kicker">Composition Deck</p>
-                <h2 className="mt-3 font-display text-3xl font-semibold text-white">
-                  Compose in your voice
-                </h2>
-                <p className="mt-3 text-sm leading-relaxed text-slate-400 sm:text-base">
-                  Build the voice blueprint, choose your channels, and ship a prompt package that
-                  feels unmistakably human.
-                </p>
-              </div>
-              <div className="rounded-full border border-lime-300/12 bg-lime-300/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                {gen.selectedPlatforms.length} live channel
-                {gen.selectedPlatforms.length === 1 ? '' : 's'}
-              </div>
+            {/* Next CTA */}
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                className="neon-button rounded-2xl px-7 py-3 text-sm font-semibold"
+              >
+                Continue to Compose →
+              </button>
             </div>
+          </div>
+        )}
 
-            <div className="mt-6 space-y-6">
-              <TextInput
-                id="brand_voice_input"
-                label="Voice Blueprint"
-                placeholder="e.g., Casual but authoritative. I use short sentences. I hate jargon. I sound like a smart friend giving advice."
-                value={gen.brandVoice}
-                onChange={(e) => gen.setBrandVoice(e.target.value)}
-                rows={6}
-                disabled={gen.isGenerating || brandKitHook.isAnalyzing}
-              />
+        {/* ── Step 2: Compose ── */}
+        {step === 2 && (
+          <div className="space-y-6">
+            <TextInput
+              id="brand_voice_input"
+              label="Voice Blueprint"
+              placeholder="e.g., Casual but authoritative. I use short sentences. I hate jargon. I sound like a smart friend giving advice."
+              value={gen.brandVoice}
+              onChange={(e) => gen.setBrandVoice(e.target.value)}
+              rows={5}
+              disabled={gen.isGenerating || brandKitHook.isAnalyzing}
+            />
 
-              <PlatformSelector
-                selectedPlatforms={gen.selectedPlatforms}
-                onChange={gen.setSelectedPlatforms}
-                disabled={gen.isGenerating}
-              />
+            <PlatformSelector
+              selectedPlatforms={gen.selectedPlatforms}
+              onChange={gen.setSelectedPlatforms}
+              disabled={gen.isGenerating}
+            />
 
-              <ContentTemplates
-                onTemplateSelect={gen.setContentRequest}
-                disabled={gen.isGenerating}
-              />
+            <ContentTemplates
+              onTemplateSelect={gen.setContentRequest}
+              disabled={gen.isGenerating}
+            />
 
-              <TextInput
-                id="content_request_input"
-                label="Campaign Brief"
-                placeholder="e.g., A thread about why most startups fail..."
-                value={gen.contentRequest}
-                onChange={(e) => gen.setContentRequest(e.target.value)}
-                rows={7}
-                disabled={gen.isGenerating}
-              />
+            <TextInput
+              id="content_request_input"
+              label="Campaign Brief"
+              placeholder="e.g., A thread about why most startups fail at distribution..."
+              value={gen.contentRequest}
+              onChange={(e) => gen.setContentRequest(e.target.value)}
+              rows={6}
+              disabled={gen.isGenerating}
+            />
 
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => setStep(1)}
+                className="neon-ghost-button rounded-2xl px-6 py-3 text-sm font-semibold"
+              >
+                ← Back
+              </button>
               <GenerateButton
-                onClick={() =>
-                  gen.handleGenerate(brandKitHook.brandKit ?? null, authToken)
-                }
+                onClick={() => {
+                  gen.handleGenerate(brandKitHook.brandKit ?? null, authToken);
+                  setStep(3);
+                }}
                 isLoading={gen.isGenerating}
                 disabled={gen.isGenerateDisabled}
               >
@@ -228,66 +260,73 @@ const CreatePage: React.FC = () => {
               </GenerateButton>
             </div>
           </div>
-        </section>
+        )}
 
-        {/* ── Right column: Output ── */}
-        <section className="output-stack">
-          <div className="neon-panel px-5 py-5 sm:px-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="neon-kicker">Output Relay</p>
-                <h2 className="mt-3 font-display text-2xl font-semibold text-white">
-                  Draft monitor
-                </h2>
-                <p className="mt-3 text-sm leading-relaxed text-slate-400">
-                  Track live output, switch across channels, and revisit prior sessions.
-                </p>
-              </div>
-              <div className="neon-segmented">
-                <TabButton
-                  label="Generated Drafts"
-                  isActive={gen.activeOutputView === 'output'}
-                  onClick={() => gen.setActiveOutputView('output')}
+        {/* ── Step 3: Output ── */}
+        {step === 3 && (
+          <div className="space-y-5">
+            {/* Output / History toggle */}
+            <div className="neon-segmented w-fit">
+              <button
+                type="button"
+                className={`neon-chip rounded-full px-4 py-2 text-sm font-semibold ${gen.activeOutputView === 'output' ? 'is-active' : ''}`}
+                onClick={() => gen.setActiveOutputView('output')}
+              >
+                Generated Drafts
+              </button>
+              <button
+                type="button"
+                className={`neon-chip rounded-full px-4 py-2 text-sm font-semibold ${gen.activeOutputView === 'history' ? 'is-active' : ''}`}
+                onClick={() => gen.setActiveOutputView('history')}
+              >
+                History
+              </button>
+            </div>
+
+            {gen.activeOutputView === 'output' ? (
+              <>
+                <BatchOutputDisplay
+                  isLoading={gen.isGenerating}
+                  error={gen.generatorError}
+                  results={gen.batchResults}
+                  selectedPlatforms={gen.selectedPlatforms}
+                  activeTab={gen.activeBatchTab}
+                  onTabChange={gen.setActiveBatchTab}
+                  onRetry={() => gen.handleGenerate(brandKitHook.brandKit ?? null, authToken)}
                 />
-                <TabButton
-                  label="History"
-                  isActive={gen.activeOutputView === 'history'}
-                  onClick={() => gen.setActiveOutputView('history')}
-                />
-              </div>
+                {hasBatchResults && (
+                  <EditToolbar
+                    isEditing={gen.isEditing}
+                    activeCommand={gen.activeEditCommand}
+                    onEdit={(cmd) => gen.handleEdit(cmd, authToken)}
+                    onUndo={gen.handleUndo}
+                    canUndo={gen.canUndo}
+                    disabled={gen.isGenerating}
+                  />
+                )}
+              </>
+            ) : (
+              <HistoryPanel
+                history={gen.history}
+                onLoadItem={(item) => {
+                  gen.loadHistoryItem(item);
+                  gen.setActiveOutputView('output');
+                }}
+                onClearHistory={gen.clearHistory}
+              />
+            )}
+
+            <div className="flex justify-start pt-2">
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                className="neon-ghost-button rounded-2xl px-6 py-3 text-sm font-semibold"
+              >
+                ← Edit brief
+              </button>
             </div>
           </div>
-
-          {gen.activeOutputView === 'output' ? (
-            <>
-              <BatchOutputDisplay
-                isLoading={gen.isGenerating}
-                error={gen.generatorError}
-                results={gen.batchResults}
-                selectedPlatforms={gen.selectedPlatforms}
-                activeTab={gen.activeBatchTab}
-                onTabChange={gen.setActiveBatchTab}
-                onRetry={() => gen.handleGenerate(brandKitHook.brandKit ?? null, authToken)}
-              />
-              {hasBatchResults && (
-                <EditToolbar
-                  isEditing={gen.isEditing}
-                  activeCommand={gen.activeEditCommand}
-                  onEdit={(cmd) => gen.handleEdit(cmd, authToken)}
-                  onUndo={gen.handleUndo}
-                  canUndo={gen.canUndo}
-                  disabled={gen.isGenerating}
-                />
-              )}
-            </>
-          ) : (
-            <HistoryPanel
-              history={gen.history}
-              onLoadItem={gen.loadHistoryItem}
-              onClearHistory={gen.clearHistory}
-            />
-          )}
-        </section>
+        )}
       </div>
     </div>
   );

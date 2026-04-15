@@ -397,6 +397,93 @@ body::after {
   animation: pulseGlow 2.8s ease-in-out infinite;
 }
 
+/* ── Create page step wizard ──────────────────────────────────────────────── */
+
+.create-step-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 243, 255, 0.12);
+  background: rgba(8, 16, 34, 0.72);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.create-step-connector {
+  width: 2rem;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(94, 242, 255, 0.18), rgba(94, 242, 255, 0.06));
+  flex-shrink: 0;
+}
+
+.create-step-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color var(--motion-smooth),
+    background var(--motion-smooth),
+    border-color var(--motion-smooth);
+  white-space: nowrap;
+}
+
+.create-step-btn:hover:not(:disabled):not(.is-active) {
+  color: var(--text-secondary);
+  background: rgba(94, 242, 255, 0.05);
+}
+
+.create-step-btn.is-active {
+  color: var(--text-primary);
+  background: linear-gradient(135deg, rgba(94, 242, 255, 0.16), rgba(183, 255, 82, 0.08));
+  border-color: rgba(94, 242, 255, 0.3);
+}
+
+.create-step-btn.is-done {
+  color: var(--accent-lime);
+}
+
+.create-step-btn.is-locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.create-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.create-step-btn.is-active .create-step-num {
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-lime));
+  color: #03111b;
+  border-color: transparent;
+  box-shadow: 0 0 14px rgba(94, 242, 255, 0.35);
+}
+
+.create-step-btn.is-done .create-step-num {
+  background: rgba(183, 255, 82, 0.15);
+  border-color: rgba(183, 255, 82, 0.3);
+  color: var(--accent-lime);
+}
+
 @media (min-width: 1280px) {
   .dashboard-layout {
     grid-template-columns: 320px minmax(0, 1fr) 430px;
