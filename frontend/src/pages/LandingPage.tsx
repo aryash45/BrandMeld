@@ -9,162 +9,160 @@ const FeatureCard: React.FC<{ title: string; desc: string; icon: React.ReactNode
   desc,
   icon,
 }) => (
-  <div className="group rounded-2xl border border-slate-800 bg-slate-900/50 p-8 transition-all duration-300 hover:border-teal-500/30 hover:bg-slate-800/80">
-    <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-xl border border-slate-700 bg-slate-800 text-teal-400 transition-transform duration-300 group-hover:scale-110">
+  <div className="border-2 border-white bg-black p-8 group hover:bg-white hover:text-black transition-colors min-h-[220px] flex flex-col items-start gap-4">
+    <div className="text-brand-cyan group-hover:text-black transition-colors">
       {icon}
     </div>
-    <h3 className="font-display mb-3 text-xl font-bold text-slate-100">{title}</h3>
-    <p className="text-sm leading-relaxed text-slate-400">{desc}</p>
-  </div>
-);
-
-const UseCaseItem: React.FC<{ label: string }> = ({ label }) => (
-  <div className="flex items-center gap-3 text-slate-300">
-    <svg className="h-5 w-5 shrink-0 text-teal-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-    </svg>
-    <span>{label}</span>
+    <h3 className="font-headline text-xl font-bold uppercase tracking-tight">{title}</h3>
+    <p className="text-sm leading-relaxed font-label">{desc}</p>
   </div>
 );
 
 const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
   return (
-    <div className="font-body relative flex min-h-screen flex-col items-center overflow-x-hidden bg-slate-950 selection:bg-teal-500/30">
-      <div className="pointer-events-none fixed left-0 top-0 z-0 h-full w-full overflow-hidden">
-        <div className="absolute left-[-10%] top-[-10%] h-[500px] w-[500px] rounded-full bg-emerald-500/10 blur-[100px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] h-[600px] w-[600px] rounded-full bg-teal-600/10 blur-[120px]" />
-      </div>
-
+    <div className="font-body relative flex min-h-screen flex-col items-center bg-black text-white selection:bg-brand-yellow selection:text-black overflow-x-hidden">
+      {/* Navbar Grid Lines */}
+      <div className="fixed inset-0 pointer-events-none opacity-20 border-l border-r border-white/20 w-full max-w-7xl mx-auto mix-blend-overlay"></div>
+      
       <div className="z-10 w-full max-w-7xl px-6 pb-20 sm:px-8 lg:px-12">
-        <nav className="flex items-center justify-between py-8 animate-fade-in">
+        <nav className="flex items-center justify-between py-8 border-b-2 border-white mb-16">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-600 shadow-lg shadow-teal-500/20" />
-            <span className="font-display text-xl font-bold tracking-tight text-slate-100">
-              BrandMeld
-            </span>
+            <div className="font-headline text-2xl font-black italic tracking-tighter uppercase">
+              DISTRIBUTION_ENGINE
+            </div>
+            <span className="font-label text-[10px] text-brand-cyan">V.02-ALPHA</span>
           </div>
           <button
             onClick={onLoginClick}
-            className="rounded-full border border-slate-800 px-5 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+            className="border-2 border-white bg-black px-6 py-2 font-headline font-bold uppercase text-white hover:bg-white hover:text-black transition-colors"
           >
-            Log In
+            SYS_LOGIN
           </button>
         </nav>
 
-        <header className="mt-16 mb-20 animate-fade-in text-center sm:mt-24">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-teal-800/50 bg-teal-900/30 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-teal-400">
-            For Founders & Creators
+        <header className="mb-24 text-left">
+          <div className="mb-6 inline-flex items-center gap-2 border-2 border-brand-yellow bg-black px-3 py-1 text-xs font-label uppercase text-brand-yellow neo-shadow-yellow">
+            <span className="w-2 h-2 bg-brand-yellow rounded-none animate-pulse"></span>
+            ROOT_ACCESS // Founders & Creators
           </div>
-          <h1 className="font-display mb-8 text-5xl font-bold leading-tight tracking-tight text-transparent bg-clip-text bg-gradient-to-b from-white via-slate-200 to-slate-500 sm:text-7xl lg:text-8xl">
-            Scale Your <br className="hidden sm:block" />
-            <span className="text-white">Personal Brand.</span>
+          <h1 className="font-headline mb-8 text-5xl md:text-7xl lg:text-[7rem] font-black leading-[0.9] tracking-tighter uppercase italic py-2">
+            OVERRIDE YOUR <br className="hidden sm:block" />
+            <span className="text-brand-cyan">DISTRIBUTION.</span>
           </h1>
-          <p className="mx-auto mb-10 max-w-2xl text-lg leading-relaxed text-slate-400 sm:text-xl">
-            Stop sounding like a corporation. Generate authentic, high-impact content that mirrors
-            your unique voice, opinions, and writing style.
-          </p>
+          <div className="max-w-2xl border-l-4 border-brand-yellow pl-6 mb-12">
+            <p className="text-lg leading-relaxed font-label text-slate-300 uppercase">
+              // NO NOISE. NO GHOSTWRITERS. <br/>
+              GENERATE RAW, HIGH-SIGNAL CONTENT THAT REFLECTS YOUR UNIQUE IDENTITY DIRECTLY ACROSS ALL SYSTEMS 
+              INSTANTLY.
+            </p>
+          </div>
 
-          <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <div className="flex flex-col sm:flex-row gap-6 items-start">
             <button
               onClick={onLoginClick}
-              className="w-full rounded-xl bg-teal-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-teal-900/20 transition-all duration-200 hover:-translate-y-1 hover:bg-teal-500 sm:w-auto"
+              className="w-full sm:w-auto bg-brand-yellow text-black px-10 py-5 font-headline font-black text-xl uppercase border-2 border-black neo-shadow hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0px_0px_white] transition-all flex items-center justify-center gap-4 group"
             >
-              Start Writing Free
+              INITIALIZE_SEQUENCE
+              <span className="material-symbols-outlined font-bold group-hover:translate-x-1 transition-transform">arrow_forward</span>
             </button>
             <button
               onClick={onLoginClick}
-              className="w-full rounded-xl border border-slate-700 bg-slate-900 px-8 py-4 text-base font-bold text-slate-300 transition-all duration-200 hover:bg-slate-800 sm:w-auto"
+              className="w-full sm:w-auto border-2 border-white bg-black px-10 py-5 font-headline font-bold text-xl text-white uppercase hover:bg-white hover:text-black transition-all flex items-center justify-center gap-3"
             >
-              Analyze My Voice
+              <span className="material-symbols-outlined">settings_voice</span>
+              INPUT_DNA
             </button>
           </div>
         </header>
 
-        <div className="mb-24 flex flex-col items-center border-y border-slate-800/60 py-8 animate-fade-in delay-100">
-          <p className="mb-6 text-xs font-semibold uppercase tracking-widest text-slate-500">
-            Optimized for platforms
-          </p>
-          <div className="flex flex-wrap justify-center gap-8 opacity-50 grayscale transition-all duration-500 hover:grayscale-0 sm:gap-16">
-            {['LinkedIn', 'Twitter / X', 'Substack', 'Medium', 'Instagram'].map((platform) => (
-              <span key={platform} className="text-lg font-bold text-slate-300">
-                {platform}
-              </span>
+        {/* Marquee effect for platforms */}
+        <div className="mb-24 border-y-2 border-white py-6 overflow-hidden bg-brand-yellow text-black flex items-center">
+          <div className="font-headline font-black text-2xl uppercase tracking-tighter whitespace-nowrap flex gap-12 sm:gap-24 items-center -ml-12 animate-[shimmer_15s_linear_infinite]">
+            {['X.COM', 'LINKEDIN_NETWORK', 'INSTAGRAM', 'SUBSTACK_PROTO', 'MEDIUM'].map((platform, i) => (
+              <React.Fragment key={platform}>
+                <span>{platform}</span>
+                <span className="text-black/50 text-3xl">/</span>
+              </React.Fragment>
+            ))}
+             {['X.COM', 'LINKEDIN_NETWORK', 'INSTAGRAM', 'SUBSTACK_PROTO', 'MEDIUM'].map((platform, i) => (
+              <React.Fragment key={`${platform}-clone`}>
+                <span>{platform}</span>
+                <span className="text-black/50 text-3xl">/</span>
+              </React.Fragment>
             ))}
           </div>
         </div>
 
-        <div className="mb-32 grid grid-cols-1 gap-6 md:grid-cols-3 lg:gap-8">
-          <FeatureCard
-            title="Voice Cloning"
-            desc="Paste your website, blog, or previous posts. Our AI deconstructs your syntax, tone, and vocabulary to build a custom model of you."
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-            }
-          />
-          <FeatureCard
-            title="Thought Leadership"
-            desc="Move beyond generic marketing copy. Generate hot takes, deep-dive threads, and storytelling posts that position you as an authority."
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            }
-          />
-          <FeatureCard
-            title="Consistency Audit"
-            desc="Ensure every piece of content aligns with your personal brand. Get an instant score and actionable feedback before you hit publish."
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-          />
-        </div>
-
-        <div className="mb-24 grid grid-cols-1 items-center gap-16 lg:grid-cols-2">
+        <div className="mb-32 grid grid-cols-1 md:grid-cols-3 gap-0 border-2 border-white bg-black">
+          <div className="md:border-r-2 border-b-2 md:border-b-0 border-white">
+            <FeatureCard
+              title="VOICE_CLONING"
+              desc="PASTE YOUR DATA. ENGINE DECONSTRUCTS SYNTAX, TONE, AND VOCABULARY TO BUILD A CUSTOM IDENTITY MODEL."
+              icon={<span className="material-symbols-outlined text-4xl">psychology</span>}
+            />
+          </div>
+          <div className="md:border-r-2 border-b-2 md:border-b-0 border-white">
+            <FeatureCard
+              title="DOMAIN_AUTHORITY"
+              desc="GENERATE HIGH-IMPACT THREADS, RANTS, AND STORIES THAT ESTABLISH PURE DOMAIN DOMINANCE."
+              icon={<span className="material-symbols-outlined text-4xl">track_changes</span>}
+            />
+          </div>
           <div>
-            <h2 className="font-display mb-6 text-3xl font-bold text-slate-100 sm:text-4xl">
-              Designed for the Modern Creator.
+             <FeatureCard
+              title="CONSISTENCY_AUDIT"
+              desc="MANDATORY SELF-CORRECTION LOOP ENSURES CONTENT ALIGNS 100% WITH YOUR CORE IDENTITY VECTORS BEFORE PUBLISHING."
+              icon={<span className="material-symbols-outlined text-4xl">verified_user</span>}
+            />
+          </div>
+        </div>
+
+        <div className="mb-24 flex flex-col lg:flex-row border-2 border-white bg-surface-container-lowest">
+          <div className="lg:w-1/2 p-8 lg:p-12 border-b-2 lg:border-b-0 lg:border-r-2 border-white">
+            <div className="font-label text-xs text-brand-cyan mb-4">[SYSTEM_ARCHITECTURE]</div>
+            <h2 className="font-headline mb-8 text-4xl font-black uppercase italic tracking-tighter text-white">
+              BUILT FOR SCALE.<br/>
+              DESIGNED FOR SPEED.
             </h2>
-            <p className="mb-8 text-lg text-slate-400">
-              Building a personal brand requires volume and quality. BrandMeld bridges the gap,
-              allowing you to scale your output without losing your soul.
+            <p className="mb-8 font-label text-sm text-slate-400 leading-relaxed uppercase">
+              BrandMeld ignores formatting overhead to bridge the gap between ideation and distribution. Scale your output signal without corrupting your identity.
             </p>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <UseCaseItem label="Founder Updates" />
-              <UseCaseItem label="Viral Twitter Threads" />
-              <UseCaseItem label="LinkedIn Storytelling" />
-              <UseCaseItem label="Newsletter Editions" />
-              <UseCaseItem label="Course Launches" />
-              <UseCaseItem label="Podcast Shownotes" />
+            <div className="grid grid-cols-1 gap-4 font-label text-xs">
+              {['Founder_Updates', 'Viral_Threads', 'Platform_Storytelling', 'Course_Launches'].map(label => (
+                <div key={label} className="border border-white/20 p-3 bg-black flex items-center justify-between">
+                  <span className="uppercase">{label}</span>
+                  <span className="text-brand-yellow">✓</span>
+                </div>
+              ))}
             </div>
           </div>
-          <div className="relative">
-            <div className="absolute inset-0 rounded-full bg-teal-500/20 blur-3xl" />
-            <div className="relative rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
-              <div className="mb-4 flex items-center gap-4 border-b border-slate-800 pb-4">
-                <div className="h-10 w-10 rounded-full bg-slate-700" />
-                <div>
-                  <div className="mb-2 h-3 w-24 rounded bg-slate-700" />
-                  <div className="h-2 w-16 rounded bg-slate-800" />
-                </div>
+          
+          <div className="lg:w-1/2 p-8 lg:p-12 relative overflow-hidden flex items-center justify-center">
+            {/* Terminal preview graphic */}
+            <div className="w-full absolute inset-0 opacity-10 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMC41Ii8+PC9zdmc+')]"></div>
+            
+            <div className="relative z-10 w-full border-2 border-brand-cyan bg-black p-6 neo-shadow">
+              <div className="flex items-center justify-between border-b-2 border-brand-cyan pb-2 mb-4">
+                 <span className="font-label text-xs text-brand-cyan font-bold">TERMINAL // ENGINE_OUTPUT</span>
+                 <div className="flex gap-2">
+                   <div className="w-3 h-3 bg-white"></div>
+                   <div className="w-3 h-3 bg-brand-yellow"></div>
+                   <div className="w-3 h-3 bg-brand-cyan"></div>
+                 </div>
               </div>
-              <div className="space-y-3">
-                <div className="h-2 w-full rounded bg-slate-800" />
-                <div className="h-2 w-full rounded bg-slate-800" />
-                <div className="h-2 w-3/4 rounded bg-slate-800" />
-                <div className="flex h-20 w-full items-center justify-center rounded border border-teal-900/30 bg-teal-900/20 font-mono text-sm text-teal-500">
-                  &gt; Generated in your voice...
-                </div>
+              <div className="font-label text-xs text-white/50 space-y-2 uppercase">
+                <p>&gt; INITIALIZING GENERATION LOOP...</p>
+                <p>&gt; EXTRACTING VOICE DNA...</p>
+                <p>&gt; ALLOCATING PLATFORM TARGETS: X, LINKEDIN</p>
+                <p className="text-brand-yellow animate-pulse">&gt; YIELDING PAYLOAD...</p>
               </div>
             </div>
           </div>
         </div>
 
-        <footer className="border-t border-slate-800/50 pt-12 text-center text-sm text-slate-600">
-          <p>&copy; {new Date().getFullYear()} BrandMeld. Built for Personal Brands.</p>
+        <footer className="border-t-2 border-white py-8 flex flex-col sm:flex-row justify-between items-center font-label text-xs uppercase text-slate-500">
+          <p>&copy; {new Date().getFullYear()} DISTRIBUTION_ENGINE.</p>
+          <p>SYS_STATUS: ONLINE</p>
         </footer>
       </div>
     </div>

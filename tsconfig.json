@@ -1,15 +1,6 @@
 {
-  "extends": "./frontend/tsconfig.json",
-  "compilerOptions": {
-    "baseUrl": "./frontend"
-  },
-  "include": [
-    "frontend/src/**/*",
-    "frontend/vite.config.ts"
-  ],
-  "exclude": [
-    "frontend/dist",
-    "frontend/node_modules",
-    "backend"
+  "files": [],
+  "references": [
+    { "path": "./frontend" }
   ]
 }

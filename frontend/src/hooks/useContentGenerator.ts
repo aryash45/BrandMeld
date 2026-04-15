@@ -22,12 +22,15 @@ import { useCallback, useState } from 'react';
 import type { BrandDNA } from '../services/apiService';
 import {
   batchGenerateContent,
-  editContent,
+  editCampaignDraft,
   generateImage,
   type EditCommand,
   type Platform,
 } from '../services/apiService';
 import { useHistory } from './useHistory';
+
+// Alias so internal call-sites don't need to change
+const editContent = editCampaignDraft;
 
 interface UseContentGeneratorReturn {
   // Inputs
@@ -82,7 +85,7 @@ export function useContentGenerator(): UseContentGeneratorReturn {
 
   const [brandVoice, setBrandVoice] = useState('');
   const [contentRequest, setContentRequest] = useState('');
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(['twitter']);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(['twitter', 'linkedin', 'instagram']);
 
   const [batchResults, setBatchResults] = useState<Partial<Record<Platform, string>>>({});
   const [isGenerating, setIsGenerating] = useState(false);

@@ -1,13 +1,6 @@
 /**
  * AuthModal — Sign in / Sign up modal wired to real Supabase Auth.
- *
- * On success, the AuthContext's onAuthStateChange listener fires automatically
- * and updates the session — no manual callback needed, just close the modal.
- *
- * Error handling:
- *  - Supabase returns structured AuthError objects with a user-readable message
- *  - Network failures are caught and shown as a generic message
- *  - The modal stays open on error so the user can correct their credentials
+ * Refactored to Cyber-Industrial Cyberpunk Aesthetic
  */
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -47,7 +40,6 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           password,
         });
         if (signInError) throw signInError;
-        // AuthContext automatically picks up the new session
         onClose();
         navigate('/dashboard');
       } else {
@@ -59,14 +51,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           },
         });
         if (signUpError) throw signUpError;
-        // Supabase sends a confirmation email by default
         setEmailSent(true);
       }
     } catch (err: unknown) {
       const message =
         err instanceof Error
           ? err.message
-          : 'An unexpected error occurred. Please try again.';
+          : 'SYS_ERR: UNEXPECTED_FAILURE';
       setError(message);
     } finally {
       setIsLoading(false);
@@ -80,111 +71,101 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 animate-fade-in"
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-modal-title"
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-8 relative shadow-2xl shadow-black/50">
+      <div className="bg-black border-2 border-brand-cyan w-full max-w-md p-8 relative neo-shadow-cyan text-white selection:bg-brand-yellow selection:text-black">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"
+          className="absolute top-4 right-4 text-brand-cyan hover:text-black hover:bg-brand-cyan border-2 border-transparent hover:border-brand-cyan font-bold transition-colors w-8 h-8 flex items-center justify-center"
           aria-label="Close authentication dialog"
         >
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <span className="material-symbols-outlined">close</span>
         </button>
 
         {emailSent ? (
-          /* Confirmation email sent state */
-          <div className="text-center py-4">
-            <div className="inline-block p-3 rounded-full bg-teal-500/10 mb-4">
-              <svg className="w-8 h-8 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <h2 id="auth-modal-title" className="text-2xl font-bold text-white mb-2">
-              Check your email
+          <div className="text-left py-4 border-l-4 border-brand-cyan pl-6">
+            <span className="material-symbols-outlined text-4xl text-brand-cyan mb-4 animate-pulse">mark_email_read</span>
+            <h2 id="auth-modal-title" className="font-headline text-3xl font-black uppercase tracking-tighter mb-4 text-brand-cyan">
+              AWAITING_VERIFICATION
             </h2>
-            <p className="text-slate-400 text-sm">
-              We sent a confirmation link to <strong className="text-slate-200">{email}</strong>.
-              Click it to activate your account, then come back to log in.
+            <p className="font-label text-sm uppercase text-slate-400 mb-6 leading-relaxed">
+              TRANSMISSION SENT TO: <br/><strong className="text-white">{email}</strong><br/><br/>
+              ACCESS LINK DISPATCHED. AWAITING SIGNAL RETURN.
             </p>
             <button
               onClick={switchMode}
-              className="mt-6 text-teal-400 text-sm hover:text-teal-300 transition-colors"
+              className="text-brand-yellow font-headline font-bold text-sm hover:underline uppercase transition-colors"
             >
-              Back to log in
+              [ REBOOT_SIGN_IN ]
             </button>
           </div>
         ) : (
           <>
-            <div className="text-center mb-8">
-              <div className="inline-block p-3 rounded-full bg-teal-500/10 mb-4">
-                <svg className="w-8 h-8 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-              </div>
-              <h2 id="auth-modal-title" className="text-2xl font-bold text-white mb-2">
-                {isLogin ? 'Welcome Back' : 'Create Account'}
+            <div className="text-left mb-8 border-b-2 border-white pb-6 relative">
+              <span className="material-symbols-outlined text-4xl text-brand-cyan mb-4">admin_panel_settings</span>
+              <h2 id="auth-modal-title" className="font-headline text-4xl font-black uppercase tracking-tighter mb-2">
+                {isLogin ? 'SYS_LOGIN' : 'INIT_ACCOUNT'}
               </h2>
-              <p className="text-slate-400">
+              <p className="font-label text-sm uppercase text-slate-400">
                 {isLogin
-                  ? 'Log in to access your brand voice.'
-                  : 'Start building your personal brand today.'}
+                  ? 'AUTHENTICATE TO ACCESS BRAND_ENGINE.'
+                  : 'REGISTER ENTITY IN DATABASE.'}
               </p>
+              <div className="absolute right-0 bottom-[-2px] w-12 h-1 bg-brand-cyan"></div>
             </div>
 
-            {/* Error banner */}
             {error && (
-              <div className="mb-4 rounded-lg border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-300">
-                {error}
+              <div className="mb-6 border-2 border-rose-500 bg-black p-3 font-label text-xs uppercase text-rose-500 neo-shadow flex gap-3">
+                <span className="material-symbols-outlined text-base">warning</span>
+                <span>{error}</span>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <form onSubmit={handleSubmit} className="space-y-6" noValidate>
               {!isLogin && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                    Full Name
+                  <label className="block text-[10px] font-bold font-label uppercase text-brand-cyan mb-2">
+                    [ IDENTIFICATION_STRING ]
                   </label>
                   <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none transition-all"
-                    placeholder="Jane Doe"
+                    className="w-full bg-black border-2 border-white px-4 py-3 text-white focus:border-brand-yellow focus:neo-shadow-yellow outline-none transition-all font-label text-sm"
+                    placeholder="ENTER_NAME..."
                     autoComplete="name"
                   />
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  Email Address
+                <label className="block text-[10px] font-bold font-label uppercase text-brand-cyan mb-2">
+                  [ PRIMARY_COMMS_ADDRESS ]
                 </label>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none transition-all"
-                  placeholder="you@example.com"
+                  className="w-full bg-black border-2 border-white px-4 py-3 text-white focus:border-brand-yellow focus:neo-shadow-yellow outline-none transition-all font-label text-sm"
+                  placeholder="USER@DOMAIN.COM"
                   required
                   autoComplete="email"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  Password
+                <label className="block text-[10px] font-bold font-label uppercase text-brand-cyan mb-2">
+                  [ SECURITY_KEY ]
                 </label>
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none transition-all"
-                  placeholder="••••••••"
+                  className="w-full bg-black border-2 border-white px-4 py-3 text-white focus:border-brand-yellow focus:neo-shadow-yellow outline-none transition-all font-label tracking-[0.2em]"
+                  placeholder="********"
                   required
                   minLength={8}
                   autoComplete={isLogin ? 'current-password' : 'new-password'}
@@ -194,30 +175,37 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               <button
                 type="submit"
                 disabled={isLoading || !email || !password}
-                className="w-full bg-teal-600 hover:bg-teal-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-lg transition-all active:scale-95 flex justify-center items-center shadow-lg shadow-teal-900/20"
+                className="w-full bg-brand-yellow text-black border-2 border-black font-headline font-black text-xl py-4 uppercase transition-all hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0px_0px_white] neo-shadow disabled:opacity-50 disabled:pointer-events-none mt-4 flex justify-center items-center gap-3"
               >
                 {isLoading ? (
-                  <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
+                  <>
+                    <span className="material-symbols-outlined animate-spin text-2xl">sync</span>
+                    <span>PROCESSING...</span>
+                  </>
                 ) : isLogin ? (
-                  'Log In'
+                  <>
+                    <span className="material-symbols-outlined font-bold text-2xl">login</span>
+                    <span>EXECUTE_LOGIN</span>
+                  </>
                 ) : (
-                  'Sign Up Free'
+                  <>
+                    <span className="material-symbols-outlined font-bold text-2xl">how_to_reg</span>
+                    <span>INITIALIZE_USER</span>
+                  </>
                 )}
               </button>
             </form>
 
-            <div className="mt-6 text-center border-t border-slate-800 pt-6">
+            <div className="mt-8 pt-6 border-t-2 border-white/20 text-center flex justify-between items-center font-label text-xs uppercase">
+              <span className="text-slate-500">
+                {isLogin ? 'NEW_ENTITY?' : 'KNOWN_ENTITY?'}
+              </span>
               <button
                 type="button"
                 onClick={switchMode}
-                className="text-slate-400 text-sm hover:text-teal-400 transition-colors"
+                className="text-brand-cyan font-bold hover:text-white hover:bg-brand-cyan hover:border-brand-cyan border border-transparent px-2 py-1 transition-colors"
               >
-                {isLogin
-                  ? "Don't have an account? Sign up"
-                  : 'Already have an account? Log in'}
+                {isLogin ? '[ REGISTER ]' : '[ AUTHENTICATE ]'}
               </button>
             </div>
           </>

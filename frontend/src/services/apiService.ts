@@ -1,17 +1,9 @@
 /**
  * apiService — All HTTP calls to the BrandMeld FastAPI backend.
  *
- * Design principles:
- *  - Single source of truth for API base URL (from VITE_API_URL env var)
- *  - Every fetch call is wrapped with structured error extraction so
- *    callers always get a meaningful Error, never a raw Response object
- *  - Auth token is accepted as an optional argument; the caller (page/hook)
- *    reads it from AuthContext and passes it in — this keeps apiService
- *    free of React/context dependencies and fully testable in isolation
- *  - Dead code removed: `generateContent` (single-platform) is removed;
- *    the app exclusively uses `batchGenerateContent`
- *  - `analyzeBrandVoice` (thin wrapper) is also removed — callers use
- *    `fetchBrandDNA` directly
+ * v2 adds the /v1/campaign/* endpoints (launch, edit, onboard, watchdog)
+ * while preserving backward-compatible legacy calls so existing hooks
+ * continue to work without modification.
  */
 
 const API_BASE_URL =
@@ -20,35 +12,19 @@ const API_BASE_URL =
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-/**
- * Builds standard headers for JSON POST requests.
- * Attaches Authorization header when an auth token is provided.
- */
 function buildHeaders(authToken?: string): HeadersInit {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
-  }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   return headers;
 }
 
-/**
- * Extracts an error message from a failed Response.
- * Tries to parse a FastAPI `{ detail: string }` shape first, then falls back
- * to the HTTP status text, then a generic fallback.
- */
-async function extractErrorMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
+async function extractErrorMessage(response: Response, fallback: string): Promise<string> {
   try {
     const body = await response.json();
     if (typeof body?.detail === 'string') return body.detail;
     if (typeof body?.message === 'string') return body.message;
   } catch {
-    // body wasn't JSON — fall through to status text
+    // not JSON
   }
   return response.statusText || fallback;
 }
@@ -57,14 +33,11 @@ async function extractErrorMessage(
 
 export type Platform = 'twitter' | 'linkedin' | 'instagram' | 'newsletter';
 
-export const PLATFORM_META: Record<
-  Platform,
-  { label: string; icon: string; color: string }
-> = {
-  twitter: { label: 'X Thread', icon: 'X', color: 'text-slate-200' },
-  linkedin: { label: 'LinkedIn', icon: 'in', color: 'text-blue-400' },
-  instagram: { label: 'Instagram', icon: 'IG', color: 'text-pink-400' },
-  newsletter: { label: 'Newsletter', icon: 'NL', color: 'text-teal-400' },
+export const PLATFORM_META: Record<Platform, { label: string; icon: string; color: string }> = {
+  twitter:    { label: 'X Thread',    icon: 'X',  color: 'text-slate-200' },
+  linkedin:   { label: 'LinkedIn',    icon: 'in', color: 'text-blue-400'  },
+  instagram:  { label: 'Instagram',   icon: 'IG', color: 'text-pink-400'  },
+  newsletter: { label: 'Newsletter',  icon: 'NL', color: 'text-teal-400'  },
 };
 
 export interface BrandDNA {
@@ -75,46 +48,144 @@ export interface BrandDNA {
   banned_concepts: string[];
 }
 
-export type EditCommand =
-  | 'shorter'
-  | 'longer'
-  | 'casual'
-  | 'formal'
-  | 'hook'
-  | 'punchy';
+/** Human-readable actions shown in EditToolbar */
+export type EditCommand = 'shorter' | 'longer' | 'casual' | 'professional' | 'hook' | 'bold';
 
-// ─── Brand Discovery ──────────────────────────────────────────────────────────
+// ─── v2: Campaign Engine endpoints ───────────────────────────────────────────
+
+export interface CampaignLaunchResult {
+  results: Partial<Record<Platform, string>>;
+  image_base64: string | null;
+  image_platform: string | null;
+  success: boolean;
+  message: string;
+}
 
 /**
- * Fetches brand DNA from a website URL via server-side Playwright + Gemini.
+ * Zero-config batch launch — defaults to X, LinkedIn, Instagram.
+ * Automatically runs internal brand-voice self-correction on every draft.
+ * Optionally generates a companion lifestyle image.
  */
+export const launchCampaign = async (
+  contentRequest: string,
+  brandVoice: string,
+  brandDna?: BrandDNA | null,
+  platforms: Platform[] = ['twitter', 'linkedin', 'instagram'],
+  generateImage = true,
+  authToken?: string,
+): Promise<CampaignLaunchResult> => {
+  const response = await fetch(`${API_BASE_URL}/v1/campaign/launch`, {
+    method: 'POST',
+    headers: buildHeaders(authToken),
+    body: JSON.stringify({
+      content_request: contentRequest,
+      brand_voice: brandVoice,
+      brand_dna: brandDna ?? null,
+      platforms,
+      generate_image: generateImage,
+    }),
+  });
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response, 'Campaign launch failed');
+    throw new Error(msg);
+  }
+  return response.json() as Promise<CampaignLaunchResult>;
+};
+
+/**
+ * Applies a human-action editing command to a draft.
+ */
+export const editCampaignDraft = async (
+  originalContent: string,
+  brandVoice: string,
+  editCommand: EditCommand,
+  authToken?: string,
+): Promise<string> => {
+  const response = await fetch(`${API_BASE_URL}/v1/campaign/edit`, {
+    method: 'POST',
+    headers: buildHeaders(authToken),
+    body: JSON.stringify({
+      original_content: originalContent,
+      brand_voice: brandVoice,
+      edit_command: editCommand,
+    }),
+  });
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response, 'Edit failed');
+    throw new Error(msg);
+  }
+  const data = await response.json();
+  return data.edited_content as string;
+};
+
+/**
+ * Zero-config onboarding — scrapes URL, extracts Brand DNA, stores in Supabase.
+ */
+export const onboardBrand = async (
+  url: string,
+  userId?: string,
+  authToken?: string,
+): Promise<BrandDNA> => {
+  const response = await fetch(`${API_BASE_URL}/v1/campaign/onboard`, {
+    method: 'POST',
+    headers: buildHeaders(authToken),
+    body: JSON.stringify({ url, user_id: userId }),
+  });
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response, 'Onboarding failed');
+    throw new Error(msg);
+  }
+  const data = await response.json();
+  return data.brand_dna as BrandDNA;
+};
+
+/**
+ * Watchdog — checks a URL for new products and returns draft campaign hooks.
+ */
+export interface WatchdogResult {
+  new_products_detected: boolean;
+  draft_campaigns: { product_name: string; campaign_hook: string; platforms: string[] }[];
+  message: string;
+}
+
+export const runWatchdog = async (
+  url: string,
+  lastKnownHash?: string,
+  authToken?: string,
+): Promise<WatchdogResult> => {
+  const params = new URLSearchParams({ url });
+  if (lastKnownHash) params.set('last_known_hash', lastKnownHash);
+  const response = await fetch(`${API_BASE_URL}/v1/campaign/watchdog?${params}`, {
+    method: 'GET',
+    headers: buildHeaders(authToken),
+  });
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response, 'Watchdog check failed');
+    throw new Error(msg);
+  }
+  return response.json() as Promise<WatchdogResult>;
+};
+
+// ─── Legacy (backward-compatible) ────────────────────────────────────────────
+
+/** @deprecated Use launchCampaign instead */
 export const fetchBrandDNA = async (
   companyIdentifier: string,
   authToken?: string,
 ): Promise<BrandDNA> => {
   const response = await fetch(
     `${API_BASE_URL}/v1/discovery?url=${encodeURIComponent(companyIdentifier)}`,
-    {
-      method: 'POST',
-      headers: buildHeaders(authToken),
-    },
+    { method: 'POST', headers: buildHeaders(authToken) },
   );
-
   if (!response.ok) {
     const msg = await extractErrorMessage(response, 'Failed to fetch brand DNA');
     throw new Error(msg);
   }
-
   const data = await response.json();
   return data.data as BrandDNA;
 };
 
-// ─── Content Generation ───────────────────────────────────────────────────────
-
-/**
- * Generates brand-aligned content for one or more platforms simultaneously.
- * Returns a partial record — only the platforms that succeeded are included.
- */
+/** @deprecated Use launchCampaign instead */
 export const batchGenerateContent = async (
   brandVoice: string,
   contentRequest: string,
@@ -126,51 +197,23 @@ export const batchGenerateContent = async (
     headers: buildHeaders(authToken),
     body: JSON.stringify({ brand_voice: brandVoice, content_request: contentRequest, platforms }),
   });
-
   if (!response.ok) {
     const msg = await extractErrorMessage(response, 'Batch generation failed');
     throw new Error(msg);
   }
-
   const data = await response.json();
   return (data.results ?? {}) as Partial<Record<Platform, string>>;
 };
 
-// ─── Inline Editing ───────────────────────────────────────────────────────────
-
-/**
- * Applies a named editing command to existing content while respecting brand voice.
- */
+/** @deprecated Use editCampaignDraft instead */
 export const editContent = async (
   originalContent: string,
   brandVoice: string,
   editCommand: EditCommand,
   authToken?: string,
-): Promise<string> => {
-  const response = await fetch(`${API_BASE_URL}/api/factory/edit`, {
-    method: 'POST',
-    headers: buildHeaders(authToken),
-    body: JSON.stringify({
-      original_content: originalContent,
-      brand_voice: brandVoice,
-      edit_command: editCommand,
-    }),
-  });
+): Promise<string> => editCampaignDraft(originalContent, brandVoice, editCommand, authToken);
 
-  if (!response.ok) {
-    const msg = await extractErrorMessage(response, 'Edit failed');
-    throw new Error(msg);
-  }
-
-  const data = await response.json();
-  return data.edited_content as string;
-};
-
-// ─── Voice Auditing ───────────────────────────────────────────────────────────
-
-/**
- * Audits content against a brand voice profile, returning a Markdown report.
- */
+/** @deprecated */
 export const auditContent = async (
   brandVoice: string,
   contentToAudit: string,
@@ -181,22 +224,15 @@ export const auditContent = async (
     headers: buildHeaders(authToken),
     body: JSON.stringify({ brand_voice: brandVoice, content_to_audit: contentToAudit }),
   });
-
   if (!response.ok) {
     const msg = await extractErrorMessage(response, 'Failed to audit content');
     throw new Error(msg);
   }
-
   const data = await response.json();
   return data.audit_report as string;
 };
 
-// ─── Image Generation ─────────────────────────────────────────────────────────
-
-/**
- * Generates a brand-aligned social media image.
- * Returns a base64 data URI string ready for use in <img src=...>.
- */
+/** @deprecated */
 export const generateImage = async (
   brandColors: string[],
   contentSummary: string,
@@ -206,23 +242,15 @@ export const generateImage = async (
   const response = await fetch(`${API_BASE_URL}/api/imagen/generate`, {
     method: 'POST',
     headers: buildHeaders(authToken),
-    body: JSON.stringify({
-      brand_colors: brandColors,
-      content_summary: contentSummary,
-      platform,
-    }),
+    body: JSON.stringify({ brand_colors: brandColors, content_summary: contentSummary, platform }),
   });
-
   if (!response.ok) {
     const msg = await extractErrorMessage(response, 'Failed to generate image');
     throw new Error(msg);
   }
-
   const data = await response.json();
   return `data:image/png;base64,${data.image_base64}`;
 };
-
-// ─── Health check ─────────────────────────────────────────────────────────────
 
 export const checkBackendHealth = async (): Promise<boolean> => {
   try {

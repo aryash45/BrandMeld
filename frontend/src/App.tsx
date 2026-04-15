@@ -1,17 +1,16 @@
 /**
- * App.tsx — Thin router shell. All business logic lives in pages and hooks.
+ * App.tsx — Router shell v2.
  *
  * Route structure:
  *  /           → LandingPage (public)
- *  /dashboard  → DashboardPage (protected)
- *  /create     → CreatePage (protected)
- *  /audit      → AuditPage (protected)
- *  /brand-kit  → BrandKitPage (protected)
+ *  /dashboard  → DashboardPage — the Magic Box (protected)  ← primary
+ *  /create     → redirect to /dashboard
  *  /history    → HistoryPage (protected)
  *  /settings   → SettingsPage (protected)
  *
- * ProtectedRoute wraps authenticated routes and redirects to '/' if no session.
- * AppLayout wraps them all with the persistent sidebar shell.
+ * Removed: /audit, /brand-kit
+ * (Audit logic is now internal self-correction inside engine.py.
+ *  Brand onboarding lives inside the Magic Box URL input.)
  */
 import React, { useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
@@ -21,9 +20,6 @@ import ProtectedRoute from './layout/ProtectedRoute';
 import AuthModal from './components/AuthModal';
 import LandingPage from './pages/LandingPage';
 import DashboardPage from './pages/DashboardPage';
-import CreatePage from './pages/CreatePage';
-import AuditPage from './pages/AuditPage';
-import BrandKitPage from './pages/BrandKitPage';
 import HistoryPage from './pages/HistoryPage';
 import SettingsPage from './pages/SettingsPage';
 
@@ -39,7 +35,7 @@ const App: React.FC = () => {
         />
 
         <Routes>
-          {/* Public — landing page */}
+          {/* Public */}
           <Route
             path="/"
             element={<LandingPage onLoginClick={() => setShowAuthModal(true)} />}
@@ -49,15 +45,17 @@ const App: React.FC = () => {
           <Route element={<ProtectedRoute />}>
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/create" element={<CreatePage />} />
-              <Route path="/audit" element={<AuditPage />} />
-              <Route path="/brand-kit" element={<BrandKitPage />} />
-              <Route path="/history" element={<HistoryPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/history"   element={<HistoryPage />} />
+              <Route path="/settings"  element={<SettingsPage />} />
+
+              {/* Redirect legacy routes → Magic Box */}
+              <Route path="/create"    element={<Navigate to="/dashboard" replace />} />
+              <Route path="/audit"     element={<Navigate to="/dashboard" replace />} />
+              <Route path="/brand-kit" element={<Navigate to="/dashboard" replace />} />
             </Route>
           </Route>
 
-          {/* Catch-all redirect */}
+          {/* Catch-all */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

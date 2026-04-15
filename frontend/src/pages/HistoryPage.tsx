@@ -85,7 +85,14 @@ const HistoryPage: React.FC = () => {
   }, [history, search]);
 
   const loadItem = (item: HistoryItem) => {
-    navigate('/create', { state: { historyItem: item } });
+    // /create no longer exists — Dashboard is now the creation surface.
+    // Persist the selected item to sessionStorage so DashboardPage can pick it up.
+    try {
+      sessionStorage.setItem('brandmeld_load_item', JSON.stringify(item));
+    } catch {
+      // sessionStorage unavailable — navigation still works, item just won't pre-load
+    }
+    navigate('/dashboard');
   };
 
   return (
@@ -93,7 +100,7 @@ const HistoryPage: React.FC = () => {
       <div className="mb-8 animate-fade-in">
         <p className="neon-kicker">Session Archive</p>
         <h1 className="mt-3 font-display text-3xl font-bold text-white">
-          History
+          Campaigns
         </h1>
         <p className="mt-2 text-slate-400">
           {history.length} session{history.length === 1 ? '' : 's'} saved locally.
@@ -150,7 +157,7 @@ const HistoryPage: React.FC = () => {
           </svg>
           <h2 className="mt-4 font-display text-xl font-semibold text-white">No history yet</h2>
           <p className="mt-2 text-sm text-slate-500">
-            Generate content in the Create workspace to start building your archive.
+            Launch your first campaign from the Dashboard to start building your archive.
           </p>
         </div>
       )}

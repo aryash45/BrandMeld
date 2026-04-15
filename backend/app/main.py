@@ -1,15 +1,35 @@
+"""
+BrandMeld API — main.py
+========================
+All traffic routes through /v1/campaign/*.
+Legacy routers (factory, auditor, imagen) are retained as deprecated
+pass-throughs via the engine router so existing frontend calls still work
+during the transition period.
+"""
+
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.services.discovery import DiscoveryService
-from app.services.supabase import SupabaseService
-from app.services.factory import router as factory_router
-from app.services.auditor import router as auditor_router
-from app.services.imagen import router as imagen_router
+from app.services.engine import router as engine_router
 
-app = FastAPI()
+# ── Legacy compatibility shims (kept so old /api/factory/* calls don't 404) ──
+# These are thin re-exports; no logic lives here any more.
+from app.services.factory import router as _factory_router  # noqa: F401
+from app.services.auditor import router as _auditor_router  # noqa: F401
+from app.services.imagen import router as _imagen_router    # noqa: F401
+
+app = FastAPI(
+    title="BrandMeld Personal Distribution Engine",
+    description=(
+        "Zero-config content generation for non-marketing users. "
+        "Point it at your URL and tell it what you're promoting."
+    ),
+    version="2.0.0",
+)
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -23,34 +43,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(factory_router, prefix="/api/factory", tags=["factory"])
-app.include_router(auditor_router, prefix="/api/auditor", tags=["auditor"])
-app.include_router(imagen_router, prefix="/api/imagen", tags=["imagen"])
+# ── Primary router — all new traffic goes here ─────────────────────────────────
+app.include_router(engine_router, prefix="/v1/campaign", tags=["campaign"])
 
-@app.get("/health")
+# ── Legacy shims — keep old clients working during migration ───────────────────
+app.include_router(_factory_router, prefix="/api/factory", tags=["factory (deprecated)"])
+app.include_router(_auditor_router, prefix="/api/auditor", tags=["auditor (deprecated)"])
+app.include_router(_imagen_router,  prefix="/api/imagen",  tags=["imagen (deprecated)"])
+
+
+@app.get("/health", tags=["meta"])
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": "2.0.0"}
 
-@app.post("/v1/discovery")
+
+# ── /v1/discovery shim — keeps useBrandKit + fetchBrandDNA working ────────────
+from fastapi import HTTPException as _HTTPException  # noqa: E402
+from app.services.engine import _extract_brand_dna, BrandDNA as _BrandDNA  # noqa: E402
+from app.services.supabase import SupabaseService as _SupabaseService  # noqa: E402
+
+
+@app.post("/v1/discovery", tags=["discovery (deprecated)"])
 async def discover(url: str):
+    """Legacy discovery shim — delegates to engine._extract_brand_dna."""
     try:
-        service = DiscoveryService()
-        dna = await service.extract_dna(url)
-        dna_data = dna.model_dump()
-        dna_data["url"] = url
+        dna: _BrandDNA = await _extract_brand_dna(url)
+        dna_data = {**dna.model_dump(), "url": url}
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise _HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to analyze brand: {exc}") from exc
+        raise _HTTPException(status_code=500, detail=f"Brand discovery failed: {exc}") from exc
 
     try:
-        db = SupabaseService()
-        saved_data = await db.save_brand_dna(dna_data)
-        if isinstance(saved_data, list) and saved_data:
-            return {"status": "success", "data": saved_data[0]}
-        if saved_data:
-            return {"status": "success", "data": saved_data}
+        db = _SupabaseService()
+        saved = await db.save_brand_dna(dna_data)
+        if isinstance(saved, list) and saved:
+            return {"status": "success", "data": saved[0]}
+        if saved:
+            return {"status": "success", "data": saved}
     except Exception:
-        pass
+        pass  # Supabase optional — fall through
 
     return {"status": "success", "data": dna_data}
+
