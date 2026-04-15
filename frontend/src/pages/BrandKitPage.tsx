@@ -8,16 +8,10 @@
  */
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { useHistory } from '../hooks/useHistory';
-import BrandKitCard from '../components/BrandKitCard';
-import type { BrandDNA } from '../services/apiService';
 
 const BrandKitPage: React.FC = () => {
-  const { history } = useHistory();
-
-  // Extract unique brand kits from history (future: fetch from Supabase)
-  // For now, show a placeholder — brand kits aren't yet persisted separately.
-  const hasKits = false; // Phase 3: replace with Supabase data
+  // Phase 3: replace with Supabase data — brand kits not yet persisted separately
+  const hasKits = false;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">

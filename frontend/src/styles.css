@@ -115,23 +115,6 @@ body::after {
   animation: fadeIn 0.55s var(--motion-smooth) forwards;
 }
 
-.neon-dashboard {
-  position: relative;
-  isolation: isolate;
-}
-
-.neon-dashboard::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 5% 25%, rgba(94, 242, 255, 0.1), transparent 20%),
-    radial-gradient(circle at 95% 12%, rgba(255, 125, 228, 0.08), transparent 18%),
-    radial-gradient(circle at 85% 88%, rgba(183, 255, 82, 0.08), transparent 18%);
-  filter: blur(8px);
-  pointer-events: none;
-  z-index: -1;
-}
 
 .neon-panel,
 .neon-panel-soft,
@@ -375,7 +358,6 @@ body::after {
   border-radius: 999px;
 }
 
-.dashboard-layout,
 .auditor-layout {
   display: grid;
   gap: 1.5rem;
@@ -485,10 +467,6 @@ body::after {
 }
 
 @media (min-width: 1280px) {
-  .dashboard-layout {
-    grid-template-columns: 320px minmax(0, 1fr) 430px;
-  }
-
   .auditor-layout {
     grid-template-columns: minmax(0, 1fr) 440px;
   }
