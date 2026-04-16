@@ -72,7 +72,6 @@ export function useCampaignLauncher(): UseCampaignLauncherReturn {
           trimmedVoice || (brandDna?.voice_personality ?? 'Confident, direct, and human. I share ideas plainly without corporate jargon.'),
           brandDna ?? null,
           DEFAULT_PLATFORMS,
-          true, // always generate image
           authToken,
         );
 
@@ -111,8 +110,6 @@ export function useCampaignLauncher(): UseCampaignLauncherReturn {
       const platforms = (item.platforms?.length ? item.platforms : DEFAULT_PLATFORMS) as Platform[];
       setResult({
         results: item.results,
-        image_base64: null,
-        image_platform: null,
         success: true,
         message: 'Loaded from history',
       });

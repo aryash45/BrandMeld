@@ -55,8 +55,6 @@ export type EditCommand = 'shorter' | 'longer' | 'casual' | 'professional' | 'ho
 
 export interface CampaignLaunchResult {
   results: Partial<Record<Platform, string>>;
-  image_base64: string | null;
-  image_platform: string | null;
   success: boolean;
   message: string;
 }
@@ -71,7 +69,6 @@ export const launchCampaign = async (
   brandVoice: string,
   brandDna?: BrandDNA | null,
   platforms: Platform[] = ['twitter', 'linkedin', 'instagram'],
-  generateImage = true,
   authToken?: string,
 ): Promise<CampaignLaunchResult> => {
   const response = await fetch(`${API_BASE_URL}/v1/campaign/launch`, {
@@ -82,7 +79,6 @@ export const launchCampaign = async (
       brand_voice: brandVoice,
       brand_dna: brandDna ?? null,
       platforms,
-      generate_image: generateImage,
     }),
   });
   if (!response.ok) {
