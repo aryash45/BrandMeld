@@ -9,18 +9,20 @@ Architecture
 ------------
   DiscoveryService  — scrapes a URL → BrandDNA (Playwright + Gemini vision)
   _audit_content    — internal self-correction step (never exposed as an API)
-  _generate_image   — produces a lifestyle image asset alongside content
   campaign router   — /v1/campaign/* endpoints:
       POST /v1/campaign/launch     — zero-config batch launch (X + LinkedIn + Instagram)
       POST /v1/campaign/edit       — inline tone edit with undo support
       POST /v1/campaign/onboard    — scrape URL → store Brand DNA in Supabase
       GET  /v1/campaign/watchdog   — lightweight poll for new products on a URL
+
+SDK: google-genai >= 1.0.0 (unified, new SDK only)
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
+import hashlib
+import json
 import logging
 import os
 import re
@@ -30,9 +32,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-import google.generativeai as genai
 from fastapi import APIRouter, HTTPException, Query
-from google import genai as genai_new
+from google import genai
+from google.genai import types as genai_types
 from playwright.async_api import async_playwright
 from pydantic import BaseModel
 
@@ -51,9 +53,9 @@ def _get_api_key() -> str:
     return key
 
 
-def _flash_model(system_instruction: str) -> genai.GenerativeModel:
-    genai.configure(api_key=_get_api_key())
-    return genai.GenerativeModel(MODEL_ID, system_instruction=system_instruction)
+def _get_client() -> genai.Client:
+    """Return a configured google-genai Client (new SDK)."""
+    return genai.Client(api_key=_get_api_key())
 
 
 # ─── Brand DNA ────────────────────────────────────────────────────────────────
@@ -100,10 +102,10 @@ async def _capture_screenshot(url: str) -> bytes | None:
 
 def _extract_meta(html: str, name: str) -> str | None:
     patterns = [
-        rf'<meta[^>]*name=["\'{name}["\'][^>]*content=["\'](.*?)["\']',
-        rf'<meta[^>]*content=["\'](.*?)["\'][^>]*name=["\'{name}["\']',
-        rf'<meta[^>]*property=["\']og:{name}["\'][^>]*content=["\'](.*?)["\']',
-        rf'<meta[^>]*content=["\'](.*?)["\'][^>]*property=["\']og:{name}["\']',
+        rf'<meta[^>]*name=["\']{name}["\'][^>]*content=["\'](.*?)["\']',
+        rf'<meta[^>]*content=["\'](.*?)["\'][^>]*name=["\']{name}["\']',
+        rf'<meta[^>]*property=["\'"]og:{name}["\'][^>]*content=["\'](.*?)["\']',
+        rf'<meta[^>]*content=["\'](.*?)["\'][^>]*property=["\'"]og:{name}["\']',
     ]
     for pat in patterns:
         m = re.search(pat, html, flags=re.IGNORECASE | re.DOTALL)
@@ -167,7 +169,7 @@ async def _extract_brand_dna(url: str) -> BrandDNA:
             "Try a public URL or allow the browser runtime."
         )
 
-    client = genai_new.Client(api_key=_get_api_key())
+    client = _get_client()
     prompt = (
         "Analyze this brand's website and return BrandDNA JSON. "
         "Use the screenshot when available. "
@@ -177,12 +179,12 @@ async def _extract_brand_dna(url: str) -> BrandDNA:
     if page_ctx:
         contents.append(page_ctx)
     if screenshot:
-        contents.append(genai_new.types.Part.from_bytes(screenshot, mime_type="image/png"))
+        contents.append(genai_types.Part.from_bytes(screenshot, mime_type="image/png"))
 
     response = client.models.generate_content(
         model=MODEL_ID,
         contents=contents,
-        config=genai_new.types.GenerateContentConfig(
+        config=genai_types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=BrandDNA,
             thinking_config={"thinking_level": "high"},
@@ -205,13 +207,18 @@ If the draft is already on-brand, return it unchanged."""
 
 async def _self_correct(draft: str, voice: str) -> str:
     """Run draft through internal audit + rewrite loop (never surfaced to user)."""
-    model = _flash_model(_AUDIT_INSTRUCTION)
+    client = _get_client()
     prompt = f"[VOICE PROFILE]\n{voice}\n\n[DRAFT]\n{draft}"
-    resp = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(temperature=0.4, top_p=0.9),
+    resp = client.models.generate_content(
+        model=MODEL_ID,
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=_AUDIT_INSTRUCTION,
+            temperature=0.4,
+            top_p=0.9,
+        ),
     )
-    return resp.text.strip() or draft
+    return (resp.text or "").strip() or draft
 
 
 # ─── Platform constraints ─────────────────────────────────────────────────────
@@ -278,56 +285,21 @@ def _build_generation_prompt(voice: str, request: str, platform: str) -> str:
 
 async def _generate_for_platform(voice: str, request: str, platform: str) -> tuple[str, str]:
     """Generate + self-correct for a single platform. Returns (platform, content)."""
-    model = _flash_model(_GENERATOR_INSTRUCTION)
+    client = _get_client()
     prompt = _build_generation_prompt(voice, request, platform)
-    resp = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(temperature=0.8, top_p=0.95),
+    resp = client.models.generate_content(
+        model=MODEL_ID,
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=_GENERATOR_INSTRUCTION,
+            temperature=0.8,
+            top_p=0.95,
+        ),
     )
-    draft = resp.text.strip()
+    draft = (resp.text or "").strip()
     # Internal audit pass — transparent to the user
     corrected = await _self_correct(draft, voice)
     return (platform, corrected)
-
-
-# ─── Image Generation (integrated into campaign flow) ────────────────────────
-
-
-async def _generate_campaign_image(
-    content_summary: str,
-    brand_colors: list[str],
-    platform: str,
-) -> str | None:
-    """
-    Generates a lifestyle image asset for the campaign.
-    Returns base64 PNG string or None on failure.
-    """
-    try:
-        colors = ", ".join(brand_colors) if brand_colors else "clean neutral tones"
-        prompt = (
-            f"Create a premium, minimalist lifestyle social media image for {platform}. "
-            f"Color palette inspired by: {colors}. "
-            f"Theme: {content_summary[:200]}. "
-            "No text overlays. Cinematic lighting. Photorealistic. "
-            "Aspect ratio suitable for the platform."
-        )
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel(MODEL_ID)
-        resp = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(response_mime_type="image/png"),
-        )
-        part = resp.candidates[0].content.parts[0]
-        image_bytes = getattr(part, "blob", None)
-        if image_bytes is None:
-            inline = getattr(part, "inline_data", None)
-            image_bytes = getattr(inline, "data", None) if inline else None
-        if not image_bytes:
-            return None
-        return base64.b64encode(image_bytes).decode()
-    except Exception as exc:
-        logger.warning("Campaign image generation failed: %s", exc)
-        return None
 
 
 # ─── Supabase helper (optional — graceful if not configured) ──────────────────
@@ -358,13 +330,10 @@ class CampaignLaunchRequest(BaseModel):
     brand_voice: str | None = None          # optional; falls back to stored DNA voice
     brand_dna: BrandDNA | None = None       # optional pre-scraped DNA
     platforms: list[str] = DEFAULT_PLATFORMS
-    generate_image: bool = True
 
 
 class CampaignLaunchResponse(BaseModel):
     results: dict[str, str]
-    image_base64: str | None = None
-    image_platform: str | None = None
     success: bool
     message: str = ""
 
@@ -425,7 +394,6 @@ async def launch_campaign(req: CampaignLaunchRequest):
     Zero-config batch campaign launch.
     Defaults to X, LinkedIn, and Instagram simultaneously.
     Runs internal audit self-correction on every draft.
-    Optionally generates a companion lifestyle image.
     """
     voice = req.brand_voice
     if not voice and req.brand_dna:
@@ -453,22 +421,8 @@ async def launch_campaign(req: CampaignLaunchRequest):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Campaign generation failed: {exc}") from exc
 
-    # Automated visual — generate for the first platform
-    image_b64: str | None = None
-    image_platform: str | None = None
-    if req.generate_image and results:
-        first_platform = list(results.keys())[0]
-        brand_colors = [req.brand_dna.primary_hex] if req.brand_dna else []
-        image_b64 = await _generate_campaign_image(
-            req.content_request, brand_colors, first_platform
-        )
-        if image_b64:
-            image_platform = first_platform
-
     return CampaignLaunchResponse(
         results=results,
-        image_base64=image_b64,
-        image_platform=image_platform,
         success=True,
         message=f"Campaign generated for: {', '.join(valid_platforms)}",
     )
@@ -484,18 +438,23 @@ async def edit_draft(req: EditRequest):
             detail=f"Invalid edit_command. Choose from: {list(_EDIT_INSTRUCTIONS.keys())}",
         )
     try:
-        model = _flash_model(_EDIT_SYSTEM)
+        client = _get_client()
         prompt = (
             f"[VOICE PROFILE]\n{req.brand_voice}\n\n"
             f"[ORIGINAL CONTENT TO EDIT]\n{req.original_content}\n\n"
             f"[EDITING INSTRUCTION]\n{instruction}"
         )
-        resp = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(temperature=0.7, top_p=0.92),
+        resp = client.models.generate_content(
+            model=MODEL_ID,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=_EDIT_SYSTEM,
+                temperature=0.7,
+                top_p=0.92,
+            ),
         )
         return EditResponse(
-            edited_content=resp.text.strip(),
+            edited_content=(resp.text or "").strip(),
             success=True,
             message=f"Applied: {req.edit_command}",
         )
@@ -552,7 +511,6 @@ async def watchdog_check(
     if not page_ctx:
         return WatchdogResponse(new_products_detected=False, message="Could not fetch page.")
 
-    import hashlib
     current_hash = hashlib.md5(page_ctx.encode()).hexdigest()
 
     if last_known_hash and current_hash == last_known_hash:
@@ -564,8 +522,7 @@ async def watchdog_check(
     # Changes detected — generate draft campaign summaries via Gemini
     draft_campaigns: list[dict] = []
     try:
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel(MODEL_ID)
+        client = _get_client()
         prompt = (
             "You are a marketing strategist. Based on the following website content, "
             "identify up to 3 new products or announcements that would make great social campaigns. "
@@ -573,14 +530,15 @@ async def watchdog_check(
             "platforms should be an array from: ['twitter', 'linkedin', 'instagram'].\n\n"
             f"WEBSITE CONTENT:\n{page_ctx[:4000]}"
         )
-        resp = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json", temperature=0.6
+        resp = client.models.generate_content(
+            model=MODEL_ID,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.6,
             ),
         )
-        import json
-        draft_campaigns = json.loads(resp.text)
+        draft_campaigns = json.loads(resp.text or "[]")
         if not isinstance(draft_campaigns, list):
             draft_campaigns = []
     except Exception as exc:

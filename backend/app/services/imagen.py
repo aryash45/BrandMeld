@@ -1,50 +1,35 @@
-import os
-import base64
+"""
+imagen.py — Legacy image generation shim
+This endpoint is disabled in v0 because gemini-2.0-flash-exp does not
+return image blobs via generate_content(). Real image generation will
+be added in v1 using Imagen 3 or Photoroom API.
+
+The route is kept so /api/imagen/* calls return a clean 503 instead of 404.
+"""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import google.generativeai as genai
 
 router = APIRouter()
 
-def _create_model() -> genai.GenerativeModel:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY environment variable not set")
-
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-2.0-flash-exp')
 
 class ImagenRequest(BaseModel):
     brand_colors: list[str]
     content_summary: str
     platform: str
 
-class ImagenResponse(BaseModel):
-    image_base64: str
 
-@router.post('/generate', response_model=ImagenResponse)
+@router.post("/generate")
 async def generate_image(request: ImagenRequest):
-    try:
-        # Build a simple prompt describing the image
-        colors = ', '.join(request.brand_colors)
-        prompt = f"Create a minimalist social media card for {request.platform}. Use background color {colors}. Include the summary: '{request.content_summary}'. Aspect ratio suitable for {request.platform}. Return a PNG image."
-        model = _create_model()
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type='image/png'
-            )
-        )
-        # Extract image bytes; assume first part contains the image blob
-        image_part = response.candidates[0].content.parts[0]
-        # The part may have 'blob' attribute with raw bytes
-        image_bytes = getattr(image_part, 'blob', None)
-        if image_bytes is None:
-            inline_data = getattr(image_part, 'inline_data', None)
-            image_bytes = getattr(inline_data, 'data', None) if inline_data else None
-        if not image_bytes:
-            raise ValueError('No image data returned from Gemini')
-        image_base64 = base64.b64encode(image_bytes).decode()
-        return ImagenResponse(image_base64=image_base64)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Image generation is not available in v0. "
+            "Gemini Flash does not return image blobs via the generate_content() method. "
+            "Real image gen (Imagen 3 / Photoroom) ships in v1."
+        ),
+    )
+
+
+@router.get("/health")
+async def imagen_health():
+    return {"status": "disabled", "message": "Image generation not available in v0. Ships in v1."}

@@ -2,23 +2,39 @@
 BrandMeld API — main.py
 ========================
 All traffic routes through /v1/campaign/*.
-Legacy routers (factory, auditor, imagen) are retained as deprecated
-pass-throughs via the engine router so existing frontend calls still work
-during the transition period.
+
+Security
+--------
+Every route under /v1/campaign/* (and legacy /api/*) is protected by
+JWT middleware that validates the Authorization: Bearer <token> header
+against the Supabase JWT secret.  Public routes: /health, /docs, /openapi.json.
 """
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI
+import os
+import logging
+
+import jwt as pyjwt
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.services.engine import router as engine_router
 
 # ── Legacy compatibility shims (kept so old /api/factory/* calls don't 404) ──
-# These are thin re-exports; no logic lives here any more.
 from app.services.factory import router as _factory_router  # noqa: F401
 from app.services.auditor import router as _auditor_router  # noqa: F401
 from app.services.imagen import router as _imagen_router    # noqa: F401
+
+logger = logging.getLogger(__name__)
+
+# ── JWT config ────────────────────────────────────────────────────────────────
+_SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+
+# Routes that don't require a valid JWT
+_PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+
 
 app = FastAPI(
     title="BrandMeld Personal Distribution Engine",
@@ -30,18 +46,62 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+)
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Auth middleware ────────────────────────────────────────────────────────────
+@app.middleware("http")
+async def jwt_auth_middleware(request: Request, call_next):
+    """
+    Validate Authorization: Bearer <token> for all non-public routes.
+    Returns 401 if the token is missing or invalid.
+    Skips validation when SUPABASE_JWT_SECRET is not configured (dev mode).
+    """
+    if request.url.path in _PUBLIC_PATHS:
+        return await call_next(request)
+
+    # If no JWT secret is configured, warn but let requests through (dev mode)
+    if not _SUPABASE_JWT_SECRET:
+        logger.warning(
+            "SUPABASE_JWT_SECRET not set — auth middleware is DISABLED. "
+            "Set this variable in production."
+        )
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing or malformed Authorization header. Expected: Bearer <token>"},
+        )
+
+    token = auth_header.removeprefix("Bearer ").strip()
+    try:
+        pyjwt.decode(
+            token,
+            _SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False},   # Supabase sets aud=authenticated; skip strict check
+        )
+    except pyjwt.ExpiredSignatureError:
+        return JSONResponse(status_code=401, content={"detail": "Token has expired."})
+    except pyjwt.InvalidTokenError as exc:
+        return JSONResponse(status_code=401, content={"detail": f"Invalid token: {exc}"})
+
+    return await call_next(request)
+
 
 # ── Primary router — all new traffic goes here ─────────────────────────────────
 app.include_router(engine_router, prefix="/v1/campaign", tags=["campaign"])
@@ -85,4 +145,3 @@ async def discover(url: str):
         pass  # Supabase optional — fall through
 
     return {"status": "success", "data": dna_data}
-
