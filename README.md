@@ -1,4 +1,4 @@
-# BrandMeld
+# BrandMeld V0
 
 > **Cloud Run Hackathon Project**: AI-powered brand voice analysis and content generation platform.
 
