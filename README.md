@@ -1,4 +1,4 @@
-# BrandMeld
+# BrandMeld V0
 
 AI-powered brand voice analysis and content generation platform.
 
