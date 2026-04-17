@@ -13,8 +13,10 @@ against the Supabase JWT secret.  Public routes: /health, /docs, /openapi.json.
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 import os
 import logging
+from functools import lru_cache
 
 import jwt as pyjwt
 from fastapi import FastAPI, Request
@@ -30,8 +32,6 @@ from app.services.imagen import router as _imagen_router    # noqa: F401
 logger = logging.getLogger(__name__)
 
 # ── JWT config ────────────────────────────────────────────────────────────────
-_SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
-
 # Routes that don't require a valid JWT
 _PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
 
@@ -52,6 +52,60 @@ _raw_origins = os.getenv(
 )
 _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
+
+def _get_supabase_jwt_secret() -> str:
+    return os.getenv("SUPABASE_JWT_SECRET", "").strip()
+
+
+def _get_supabase_project_url() -> str:
+    return os.getenv("SUPABASE_URL", "").strip()
+
+
+def _get_supabase_auth_key() -> str:
+    return (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+        or os.getenv("SUPABASE_ANON_KEY", "").strip()
+    )
+
+
+@lru_cache(maxsize=8)
+def _build_supabase_auth_client(url: str, key: str):
+    from supabase import create_client
+
+    return create_client(url, key).auth
+
+
+def _get_supabase_auth_client():
+    url = _get_supabase_project_url()
+    key = _get_supabase_auth_key()
+    if not url or not key:
+        return None
+    return _build_supabase_auth_client(url, key)
+
+
+async def _verify_supabase_token(token: str) -> bool:
+    auth_client = _get_supabase_auth_client()
+    if auth_client is None:
+        return False
+
+    try:
+        user_response = await asyncio.to_thread(auth_client.get_user, token)
+    except Exception as exc:
+        logger.warning("Supabase token verification failed: %s", exc)
+        return False
+
+    return bool(getattr(user_response, "user", None))
+
+
+def _build_cors_headers(request: Request) -> dict[str, str]:
+    origin = request.headers.get("origin", "")
+    if origin and (origin in _allowed_origins or "*" in _allowed_origins):
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        }
+    return {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -63,42 +117,75 @@ app.add_middleware(
 
 # ── Auth middleware ────────────────────────────────────────────────────────────
 @app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path not in _PUBLIC_PATHS:
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+@app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     """
     Validate Authorization: Bearer <token> for all non-public routes.
     Returns 401 if the token is missing or invalid.
     Skips validation when SUPABASE_JWT_SECRET is not configured (dev mode).
     """
-    if request.url.path in _PUBLIC_PATHS:
+    if request.url.path in _PUBLIC_PATHS or request.method == "OPTIONS":
         return await call_next(request)
 
-    # If no JWT secret is configured, warn but let requests through (dev mode)
-    if not _SUPABASE_JWT_SECRET:
+    jwt_secret = _get_supabase_jwt_secret()
+    auth_client = _get_supabase_auth_client()
+
+    # If no verifier is configured, warn but let requests through (dev mode)
+    if not jwt_secret and auth_client is None:
         logger.warning(
-            "SUPABASE_JWT_SECRET not set — auth middleware is DISABLED. "
-            "Set this variable in production."
+            "No Supabase token verifier configured — auth middleware is DISABLED. "
+            "Set SUPABASE_JWT_SECRET for symmetric JWTs or SUPABASE_URL with a Supabase auth key."
         )
         return await call_next(request)
+
+    cors_headers = _build_cors_headers(request)
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return JSONResponse(
             status_code=401,
             content={"detail": "Missing or malformed Authorization header. Expected: Bearer <token>"},
+            headers=cors_headers
         )
 
     token = auth_header.removeprefix("Bearer ").strip()
     try:
-        pyjwt.decode(
-            token,
-            _SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"verify_aud": False},   # Supabase sets aud=authenticated; skip strict check
-        )
+        header = pyjwt.get_unverified_header(token)
+    except pyjwt.InvalidTokenError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid authentication token."}, headers=cors_headers)
+
+    algorithm = str(header.get("alg", "")).upper()
+    try:
+        if algorithm.startswith("HS") and jwt_secret:
+            pyjwt.decode(
+                token,
+                jwt_secret,
+                algorithms=["HS256", "HS384", "HS512"],
+                options={"verify_aud": False},   # Supabase sets aud=authenticated; skip strict check
+            )
+        elif auth_client is not None and await _verify_supabase_token(token):
+            pass
+        else:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid authentication token."},
+                headers=cors_headers,
+            )
     except pyjwt.ExpiredSignatureError:
-        return JSONResponse(status_code=401, content={"detail": "Token has expired."})
-    except pyjwt.InvalidTokenError as exc:
-        return JSONResponse(status_code=401, content={"detail": f"Invalid token: {exc}"})
+        return JSONResponse(status_code=401, content={"detail": "Token has expired."}, headers=cors_headers)
+    except pyjwt.InvalidTokenError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid authentication token."}, headers=cors_headers)
 
     return await call_next(request)
 

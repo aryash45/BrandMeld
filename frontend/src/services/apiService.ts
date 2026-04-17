@@ -48,6 +48,45 @@ export interface BrandDNA {
   banned_concepts: string[];
 }
 
+export interface CampaignBrief {
+  what_changed: string;
+  why_it_matters: string;
+  target_audience: string;
+  proof_points: string[];
+  call_to_action: string;
+}
+
+export interface CampaignChannelPlan {
+  platform: Platform;
+  format: string;
+  rationale: string;
+}
+
+export interface CampaignAngle {
+  title: string;
+  audience_focus: string;
+  core_message: string;
+  proof_to_use: string[];
+  call_to_action: string;
+  why_this_works: string;
+}
+
+export interface CampaignPlan {
+  campaign_headline: string;
+  summary: string;
+  primary_angle: CampaignAngle;
+  alternate_angles: string[];
+  channels: CampaignChannelPlan[];
+  recommended_prompt: string;
+  approval_checklist: string[];
+}
+
+export interface CampaignPlanResult {
+  plan: CampaignPlan;
+  success: boolean;
+  message: string;
+}
+
 /** Human-readable actions shown in EditToolbar */
 export type EditCommand = 'shorter' | 'longer' | 'casual' | 'professional' | 'hook' | 'bold';
 
@@ -59,16 +98,40 @@ export interface CampaignLaunchResult {
   message: string;
 }
 
+export const planCampaign = async (
+  brief: CampaignBrief,
+  brandVoice: string,
+  brandDna?: BrandDNA | null,
+  platforms: Platform[] = ['twitter', 'linkedin', 'newsletter'],
+  authToken?: string,
+): Promise<CampaignPlanResult> => {
+  const response = await fetch(`${API_BASE_URL}/v1/campaign/plan`, {
+    method: 'POST',
+    headers: buildHeaders(authToken),
+    body: JSON.stringify({
+      brief,
+      brand_voice: brandVoice,
+      brand_dna: brandDna ?? null,
+      platforms,
+    }),
+  });
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response, 'Campaign planning failed');
+    throw new Error(msg);
+  }
+  return response.json() as Promise<CampaignPlanResult>;
+};
+
 /**
  * Zero-config batch launch — defaults to X, LinkedIn, Instagram.
  * Automatically runs internal brand-voice self-correction on every draft.
- * Optionally generates a companion lifestyle image.
+ * Returns generated copy only; image generation is disabled in v0.
  */
 export const launchCampaign = async (
   contentRequest: string,
   brandVoice: string,
   brandDna?: BrandDNA | null,
-  platforms: Platform[] = ['twitter', 'linkedin', 'instagram'],
+  platforms: Platform[] = ['twitter', 'linkedin', 'newsletter'],
   authToken?: string,
 ): Promise<CampaignLaunchResult> => {
   const response = await fetch(`${API_BASE_URL}/v1/campaign/launch`, {
@@ -188,17 +251,14 @@ export const batchGenerateContent = async (
   platforms: Platform[],
   authToken?: string,
 ): Promise<Partial<Record<Platform, string>>> => {
-  const response = await fetch(`${API_BASE_URL}/api/factory/batch-generate`, {
-    method: 'POST',
-    headers: buildHeaders(authToken),
-    body: JSON.stringify({ brand_voice: brandVoice, content_request: contentRequest, platforms }),
-  });
-  if (!response.ok) {
-    const msg = await extractErrorMessage(response, 'Batch generation failed');
-    throw new Error(msg);
-  }
-  const data = await response.json();
-  return (data.results ?? {}) as Partial<Record<Platform, string>>;
+  const data = await launchCampaign(
+    contentRequest,
+    brandVoice,
+    null,
+    platforms,
+    authToken,
+  );
+  return data.results;
 };
 
 /** @deprecated Use editCampaignDraft instead */
@@ -211,21 +271,13 @@ export const editContent = async (
 
 /** @deprecated */
 export const auditContent = async (
-  brandVoice: string,
-  contentToAudit: string,
-  authToken?: string,
+  _brandVoice: string,
+  _contentToAudit: string,
+  _authToken?: string,
 ): Promise<string> => {
-  const response = await fetch(`${API_BASE_URL}/api/auditor/audit`, {
-    method: 'POST',
-    headers: buildHeaders(authToken),
-    body: JSON.stringify({ brand_voice: brandVoice, content_to_audit: contentToAudit }),
-  });
-  if (!response.ok) {
-    const msg = await extractErrorMessage(response, 'Failed to audit content');
-    throw new Error(msg);
-  }
-  const data = await response.json();
-  return data.audit_report as string;
+  throw new Error(
+    'Manual audit is no longer exposed. Brand audit now runs automatically during launch and edit.',
+  );
 };
 
 /** @deprecated */
@@ -245,6 +297,9 @@ export const generateImage = async (
     throw new Error(msg);
   }
   const data = await response.json();
+  if (typeof data.image_base64 !== 'string' || !data.image_base64) {
+    throw new Error('Image generation is not available in v0.');
+  }
   return `data:image/png;base64,${data.image_base64}`;
 };
 

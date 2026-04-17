@@ -28,7 +28,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
         <nav className="flex items-center justify-between py-8 border-b-2 border-white mb-16">
           <div className="flex items-center gap-3">
             <div className="font-headline text-2xl font-black italic tracking-tighter uppercase">
-              DISTRIBUTION_ENGINE
+              BRAND MELD-YOUR PERSONAL MARKETING ENGINE 
             </div>
             <span className="font-label text-[10px] text-brand-cyan">V.02-ALPHA</span>
           </div>

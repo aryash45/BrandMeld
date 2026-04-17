@@ -80,6 +80,7 @@ class TestAuthMiddleware:
             headers={"Authorization": "Bearer not.a.real.jwt"},
         )
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid authentication token."
 
     def test_expired_token_returns_401(self, client):
         """Expired JWT → 401."""
@@ -114,6 +115,38 @@ class TestAuthMiddleware:
                 headers={"Authorization": f"Bearer {token}"},
             )
         # 401 must NOT happen — any other status (200, 422, 500) is fine for this test
+        assert resp.status_code != 401
+
+    def test_supabase_verified_token_passes_without_jwt_secret(self, client, monkeypatch):
+        """Fallback Supabase verification should accept asymmetric-style tokens."""
+        import base64
+        import json
+
+        def _b64(data: dict[str, str]) -> str:
+            raw = json.dumps(data, separators=(",", ":")).encode()
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+        token = f"{_b64({'alg': 'RS256', 'typ': 'JWT'})}.{_b64({'sub': _TEST_USER_ID})}.sig"
+        monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+
+        mock_resp = MagicMock()
+        mock_resp.text = "Draft content for test."
+        with patch("app.main._get_supabase_auth_client", return_value=object()), \
+             patch("app.main._verify_supabase_token", new=AsyncMock(return_value=True)), \
+             patch("app.services.engine._get_client") as mock_client_fn:
+            mock_gen = MagicMock()
+            mock_gen.models.generate_content.return_value = mock_resp
+            mock_client_fn.return_value = mock_gen
+
+            resp = client.post(
+                "/v1/campaign/launch",
+                json={
+                    "content_request": "Write about our AI product launch",
+                    "brand_voice": "Direct, technical, first-person",
+                    "platforms": ["twitter"],
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
         assert resp.status_code != 401
 
     def test_wrong_scheme_returns_401(self, client):
@@ -310,6 +343,71 @@ class TestCampaignEdit:
         assert len(data["edited_content"]) > 0
 
 
+class TestCampaignPlanning:
+    def _authed_post(self, client, payload):
+        token = _make_token()
+        return client.post(
+            "/v1/campaign/plan",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def test_plan_requires_what_changed(self, client):
+        resp = self._authed_post(client, {
+            "brief": {
+                "what_changed": "",
+                "why_it_matters": "test",
+                "target_audience": "founders",
+                "proof_points": [],
+                "call_to_action": "learn more",
+            }
+        })
+        assert resp.status_code == 422
+
+    def test_plan_returns_structured_response(self, client):
+        from app.services.engine import CampaignAngle, CampaignChannelPlan, CampaignPlan
+
+        mock_resp = MagicMock()
+        mock_resp.parsed = CampaignPlan(
+            campaign_headline="Launch the planning layer",
+            summary="Explain the move from generic writing to campaign strategy.",
+            primary_angle=CampaignAngle(
+                title="Strategy before copy",
+                audience_focus="Founders who hate blank prompts",
+                core_message="Plan first, then write.",
+                proof_to_use=["Explains why the angle works"],
+                call_to_action="Try the planner",
+                why_this_works="It makes the product feel strategic instead of generic.",
+            ),
+            alternate_angles=["Less fluff, more clarity"],
+            channels=[
+                CampaignChannelPlan(platform="twitter", format="Thread", rationale="Fast product update"),
+                CampaignChannelPlan(platform="linkedin", format="Post", rationale="Explain the thinking"),
+            ],
+            recommended_prompt="Use the approved angle to generate drafts.",
+            approval_checklist=["Include proof", "Keep the hook specific"],
+        )
+
+        with patch("app.services.engine._get_client") as mock_fn:
+            mock_fn.return_value.models.generate_content.return_value = mock_resp
+            resp = self._authed_post(client, {
+                "brief": {
+                    "what_changed": "We added campaign planning before draft generation.",
+                    "why_it_matters": "Users now get a sharper angle before the app writes anything.",
+                    "target_audience": "Technical founders",
+                    "proof_points": ["Why this works explanation", "Approval checklist"],
+                    "call_to_action": "Try the new workflow",
+                },
+                "platforms": ["twitter", "linkedin"],
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["plan"]["campaign_headline"] == "Launch the planning layer"
+        assert data["plan"]["primary_angle"]["title"] == "Strategy before copy"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Watchdog
 # ══════════════════════════════════════════════════════════════════════════════
@@ -333,6 +431,15 @@ class TestWatchdog:
             )
         assert resp.status_code == 400
 
+    def test_watchdog_rejects_private_url_targets(self, client):
+        token = _make_token()
+        resp = client.get(
+            "/v1/campaign/watchdog?url=http://127.0.0.1/internal",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 400
+        assert "private" in resp.json()["detail"].lower()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Engine health (public)
@@ -343,6 +450,8 @@ class TestHealth:
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert resp.headers["x-frame-options"] == "DENY"
 
     def test_engine_health(self, client):
         """Engine health is a protected sub-route."""

@@ -2,15 +2,15 @@
  * useCampaignLauncher — Powers the Magic Box Dashboard.
  *
  * Uses the new /v1/campaign/launch endpoint which:
- *  - Hits X, LinkedIn, and Instagram in parallel by default
+ *  - Hits X, LinkedIn, and email newsletter in parallel by default
  *  - Runs internal brand-voice self-correction on every draft
- *  - Returns a companion lifestyle image automatically
+ *  - Returns generated copy only; image generation is disabled in v0
  */
 import { useCallback, useState } from 'react';
 import { launchCampaign, type BrandDNA, type CampaignLaunchResult, type Platform } from '../services/apiService';
 import { useHistory } from './useHistory';
 
-const DEFAULT_PLATFORMS: Platform[] = ['twitter', 'linkedin', 'instagram'];
+const DEFAULT_PLATFORMS: Platform[] = ['twitter', 'linkedin', 'newsletter'];
 
 export interface UseCampaignLauncherReturn {
   // Input
@@ -29,7 +29,7 @@ export interface UseCampaignLauncherReturn {
   setActiveTab: (p: Platform) => void;
 
   // Actions
-  launch: (brandDna?: BrandDNA | null, authToken?: string) => Promise<void>;
+  launch: (brandDna?: BrandDNA | null, authToken?: string, contentOverride?: string) => Promise<void>;
   reset: () => void;
 
   // History
@@ -52,8 +52,8 @@ export function useCampaignLauncher(): UseCampaignLauncherReturn {
   const [activeTab, setActiveTab] = useState<Platform | null>(null);
 
   const launch = useCallback(
-    async (brandDna?: BrandDNA | null, authToken?: string) => {
-      const trimmedRequest = contentRequest.trim();
+    async (brandDna?: BrandDNA | null, authToken?: string, contentOverride?: string) => {
+      const trimmedRequest = (contentOverride ?? contentRequest).trim();
       const trimmedVoice = brandVoice.trim();
 
       if (!trimmedRequest) {

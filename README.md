@@ -1,15 +1,15 @@
 # BrandMeld
 
-> **Cloud Run Hackathon Project**: AI-powered brand voice analysis and content generation platform.
+AI-powered brand voice analysis and content generation platform.
 
-BrandMeld is a full-stack content distribution platform designed to help founders and creators maintain a consistent personal brand. It utilizes Google Gemini 2.0 Flash to extract a user's unique "Brand DNA" from their existing content, and then generates new, platform-specific content (Twitter/LinkedIn) that goes through an internal auditing gate to ensure strict adherence to that voice.
+BrandMeld is a full-stack content distribution platform designed to help founders and creators maintain a consistent personal brand. It utilizes Google Gemini Flash to extract a user's unique "Brand DNA" from their existing content, and then generates new, platform-specific content (Twitter/LinkedIn) that goes through an internal auditing gate to ensure strict adherence to that voice.
 
 ---
 
 ## 🚀 Core Features
 
 ### 1. Brand Identity Extraction
-Provide a website or text sample. The system uses the **Gemini 2.0 Flash** model to deconstruct syntax, tone, pacing, and vocabulary, generating a deterministic voice profile for future content.
+Provide a website or text sample. The system uses the **Gemini Flash** model family to deconstruct syntax, tone, pacing, and vocabulary, generating a deterministic voice profile for future content.
 
 ### 2. The Distribution Engine
 Generate platform-specific content (e.g., LinkedIn posts, Twitter threads, newsletters) by passing prompts through your customized brand-voice model.
@@ -52,6 +52,7 @@ BrandMeld-CloudRunHackathon/
 **1. Backend Config (`backend/.env`)**
 ```env
 GEMINI_API_KEY=your_gemini_key
+GEMINI_MODEL_ID=gemini-2.5-flash
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 PORT=8080
@@ -104,4 +105,4 @@ All core brand logic has been consolidated under `/v1/campaign/*` logic endpoint
 
 ---
 
-**Built by aryash45 for the Google Cloud Run Hackathon.** 🚀
+**Built for People Who Hate Marketing** 🚀

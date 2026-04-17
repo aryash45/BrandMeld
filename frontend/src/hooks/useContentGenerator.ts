@@ -8,7 +8,7 @@
  *  - Platform selection
  *  - Batch generation (concurrent per-platform via backend)
  *  - Inline editing with undo stack (per platform)
- *  - Image generation
+ *  - Placeholder image state for the disabled v0 image flow
  *  - Writing history entries (via useHistory hook)
  *
  * Design notes:
@@ -21,9 +21,8 @@
 import { useCallback, useState } from 'react';
 import type { BrandDNA } from '../services/apiService';
 import {
-  batchGenerateContent,
   editCampaignDraft,
-  generateImage,
+  launchCampaign,
   type EditCommand,
   type Platform,
 } from '../services/apiService';
@@ -138,12 +137,14 @@ export function useContentGenerator(): UseContentGeneratorReturn {
       setImageError(null);
 
       try {
-        const results = await batchGenerateContent(
-          trimmedVoice,
+        const campaign = await launchCampaign(
           trimmedRequest,
+          trimmedVoice,
+          brandKit,
           selectedPlatforms,
           authToken,
         );
+        const results = campaign.results;
         setBatchResults(results);
 
         // Save ALL platform results to history (not just the first)
@@ -212,32 +213,18 @@ export function useContentGenerator(): UseContentGeneratorReturn {
   }, [activePlatform, editHistory]);
 
   const handleGenerateImage = useCallback(
-    async (brandKit: BrandDNA, authToken?: string) => {
-      if (!activePlatform) return;
-      const content = batchResults[activePlatform];
-      if (!content) return;
-
+    async (_brandKit: BrandDNA, _authToken?: string) => {
       setIsGeneratingImage(true);
       setGeneratedImage(null);
-      setImageError(null);
+      setImageError('Image generation is not available in v0.');
 
       try {
-        const imageUrl = await generateImage(
-          [brandKit.primary_hex],
-          content,
-          activePlatform,
-          authToken,
-        );
-        setGeneratedImage(imageUrl);
-      } catch (err) {
-        setImageError(
-          err instanceof Error ? err.message : 'Failed to generate image',
-        );
+        await Promise.resolve();
       } finally {
         setIsGeneratingImage(false);
       }
     },
-    [activePlatform, batchResults],
+    [],
   );
 
   const loadHistoryItem = useCallback(
@@ -285,7 +272,7 @@ export function useContentGenerator(): UseContentGeneratorReturn {
     isGeneratingImage,
     imageError,
     handleGenerateImage,
-    canGenerateImage,
+    canGenerateImage: false,
 
     activeOutputView,
     setActiveOutputView,

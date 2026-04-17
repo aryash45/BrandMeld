@@ -16,17 +16,17 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   {
     to: '/dashboard',
-    label: 'DASHBOARD',
+    label: 'TODAY',
     icon: 'dashboard',
   },
   {
     to: '/history',
-    label: 'ARCHIVE',
+    label: 'LIBRARY',
     icon: 'archive',
   },
   {
     to: '/settings',
-    label: 'SYSTEM_SETTINGS',
+    label: 'SETTINGS',
     icon: 'settings_applications',
   },
 ];
@@ -65,7 +65,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       >
         {/* Header */}
         <div className="p-6 border-b-2 border-white shrink-0">
-          <div className="text-white font-bold text-lg font-headline tracking-tighter">DISTRIBUTION_ENGINE</div>
+          <div className="text-white font-bold text-lg font-headline tracking-tighter">BRANDMELD</div>
           <div className="text-brand-cyan opacity-70 mt-1">V.02-ALPHA</div>
           <div className="text-white opacity-50 mt-1">[SYS_ID: {user?.id?.slice(0, 8) || '00000000'}]</div>
         </div>
@@ -78,7 +78,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           }}
           className="m-4 p-4 bg-brand-yellow text-black border-2 border-black font-bold flex items-center justify-between hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0px_0px_white] transition-all"
         >
-          <span>NEW_DISTRIBUTION</span>
+          <span>NEW CAMPAIGN</span>
           <span className="material-symbols-outlined ml-2">add</span>
         </button>
 

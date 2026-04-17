@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 from html import unescape
 from typing import Annotated
 from urllib.error import HTTPError, URLError
@@ -36,12 +38,14 @@ from fastapi import APIRouter, HTTPException, Query
 from google import genai
 from google.genai import types as genai_types
 from playwright.async_api import async_playwright
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-MODEL_ID = "gemini-2.0-flash-exp"
+DEFAULT_MODEL_ID = "gemini-2.5-flash"
+GEMINI_RETRY_DELAYS = (1.0, 2.0, 4.0)
+DEFAULT_PLATFORMS = ["twitter", "linkedin", "newsletter"]
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -53,9 +57,60 @@ def _get_api_key() -> str:
     return key
 
 
+def _get_model_id() -> str:
+    return os.getenv("GEMINI_MODEL_ID", DEFAULT_MODEL_ID)
+
+
 def _get_client() -> genai.Client:
     """Return a configured google-genai Client (new SDK)."""
     return genai.Client(api_key=_get_api_key())
+
+
+def _is_retryable_gemini_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "503 unavailable" in message
+        or "'status': 'unavailable'" in message
+        or '"status": "unavailable"' in message
+        or "currently experiencing high demand" in message
+    )
+
+
+async def _generate_content_with_retry(
+    *,
+    client: genai.Client,
+    contents,
+    config: genai_types.GenerateContentConfig,
+) -> genai_types.GenerateContentResponse:
+    model_id = _get_model_id()
+    last_exc: Exception | None = None
+
+    for attempt, delay in enumerate((0.0, *GEMINI_RETRY_DELAYS), start=1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            return await asyncio.to_thread(
+                lambda: client.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                    config=config,
+                )
+            )
+        except Exception as exc:
+            last_exc = exc
+            if not _is_retryable_gemini_error(exc) or attempt > len(GEMINI_RETRY_DELAYS):
+                raise
+            logger.warning(
+                "Gemini generate_content temporary failure on attempt %s/%s for model %s: %s",
+                attempt,
+                len(GEMINI_RETRY_DELAYS) + 1,
+                model_id,
+                exc,
+            )
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Gemini request failed before any attempt was made")
 
 
 # ─── Brand DNA ────────────────────────────────────────────────────────────────
@@ -72,6 +127,41 @@ class BrandDNA(BaseModel):
 # ─── Discovery (internal + exposed via /onboard) ──────────────────────────────
 
 
+def _is_blocked_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _enforce_public_url(parsed) -> None:
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Invalid URL: missing hostname")
+    if hostname.lower() == "localhost" or hostname.lower().endswith(".localhost"):
+        raise ValueError("Private and localhost URLs are not allowed.")
+    if _is_blocked_ip(hostname):
+        raise ValueError("Private and localhost URLs are not allowed.")
+
+    try:
+        infos = socket.getaddrinfo(hostname, parsed.port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return
+
+    for info in infos:
+        address = info[4][0]
+        if _is_blocked_ip(address):
+            raise ValueError("Private and localhost URLs are not allowed.")
+
+
 def _normalize_url(url: str) -> str:
     candidate = url.strip()
     if not candidate:
@@ -81,6 +171,11 @@ def _normalize_url(url: str) -> str:
     parsed = urlparse(candidate)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError(f"Invalid URL: {url!r}")
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Only http:// and https:// URLs are allowed.")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs with embedded credentials are not allowed.")
+    _enforce_public_url(parsed)
     return candidate
 
 
@@ -181,13 +276,12 @@ async def _extract_brand_dna(url: str) -> BrandDNA:
     if screenshot:
         contents.append(genai_types.Part.from_bytes(screenshot, mime_type="image/png"))
 
-    response = client.models.generate_content(
-        model=MODEL_ID,
+    response = await _generate_content_with_retry(
+        client=client,
         contents=contents,
         config=genai_types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=BrandDNA,
-            thinking_config={"thinking_level": "high"},
         ),
     )
     if response.parsed is None:
@@ -209,8 +303,8 @@ async def _self_correct(draft: str, voice: str) -> str:
     """Run draft through internal audit + rewrite loop (never surfaced to user)."""
     client = _get_client()
     prompt = f"[VOICE PROFILE]\n{voice}\n\n[DRAFT]\n{draft}"
-    resp = client.models.generate_content(
-        model=MODEL_ID,
+    resp = await _generate_content_with_retry(
+        client=client,
         contents=prompt,
         config=genai_types.GenerateContentConfig(
             system_instruction=_AUDIT_INSTRUCTION,
@@ -273,6 +367,43 @@ CRITICAL STYLE RULES:
 Analyze [BRAND_VOICE] deeply before writing. Match sentence length, vocabulary complexity, emotional range.
 """
 
+_PLANNER_SYSTEM = """You are BrandMeld's campaign strategist.
+
+Your job is to turn product reality into founder-led marketing.
+Do not write generic marketing fluff. Build a sharp plan for someone who hates marketing and needs clarity.
+Prefer specific, proof-backed angles over vague inspiration.
+"""
+
+
+def _resolve_voice(brand_voice: str | None, brand_dna: BrandDNA | None) -> str:
+    if brand_voice and brand_voice.strip():
+        return brand_voice.strip()
+    if brand_dna and brand_dna.voice_personality.strip():
+        return brand_dna.voice_personality.strip()
+    return "Confident, direct, and human. I explain why the product matters without sounding corporate."
+
+
+def _normalize_platforms(platforms: list[str]) -> list[str]:
+    return [platform for platform in platforms if platform in PLATFORM_CONSTRAINTS]
+
+
+def _build_plan_prompt(brief: CampaignBrief, voice: str, platforms: list[str]) -> str:
+    proof_points = "\n".join(f"- {item}" for item in brief.proof_points if item.strip()) or "- No proof points provided yet"
+    platform_notes = "\n".join(
+        f"- {platform}: {PLATFORM_CONSTRAINTS[platform].splitlines()[0]}"
+        for platform in platforms
+    )
+    return (
+        f"[BRAND VOICE]\n{voice}\n\n"
+        f"[WHAT CHANGED]\n{brief.what_changed}\n\n"
+        f"[WHY IT MATTERS]\n{brief.why_it_matters or 'Not provided'}\n\n"
+        f"[TARGET AUDIENCE]\n{brief.target_audience or 'Founders and product-led buyers who need a simple explanation'}\n\n"
+        f"[PROOF POINTS]\n{proof_points}\n\n"
+        f"[CALL TO ACTION]\n{brief.call_to_action or 'Invite the reader to learn more or try the product'}\n\n"
+        f"[CHANNELS]\n{platform_notes}\n\n"
+        "Return a campaign plan that picks the strongest angle, explains why it works, and prepares this for approval before drafting."
+    )
+
 
 def _build_generation_prompt(voice: str, request: str, platform: str) -> str:
     constraints = PLATFORM_CONSTRAINTS.get(platform, "")
@@ -287,8 +418,8 @@ async def _generate_for_platform(voice: str, request: str, platform: str) -> tup
     """Generate + self-correct for a single platform. Returns (platform, content)."""
     client = _get_client()
     prompt = _build_generation_prompt(voice, request, platform)
-    resp = client.models.generate_content(
-        model=MODEL_ID,
+    resp = await _generate_content_with_retry(
+        client=client,
         contents=prompt,
         config=genai_types.GenerateContentConfig(
             system_instruction=_GENERATOR_INSTRUCTION,
@@ -300,6 +431,27 @@ async def _generate_for_platform(voice: str, request: str, platform: str) -> tup
     # Internal audit pass — transparent to the user
     corrected = await _self_correct(draft, voice)
     return (platform, corrected)
+
+
+async def _plan_campaign(
+    brief: CampaignBrief,
+    voice: str,
+    platforms: list[str],
+) -> CampaignPlan:
+    client = _get_client()
+    response = await _generate_content_with_retry(
+        client=client,
+        contents=_build_plan_prompt(brief, voice, platforms),
+        config=genai_types.GenerateContentConfig(
+            system_instruction=_PLANNER_SYSTEM,
+            response_mime_type="application/json",
+            response_schema=CampaignPlan,
+            temperature=0.5,
+        ),
+    )
+    if response.parsed is None:
+        raise RuntimeError("Campaign planning returned an empty response from Gemini")
+    return response.parsed
 
 
 # ─── Supabase helper (optional — graceful if not configured) ──────────────────
@@ -322,14 +474,65 @@ def _get_supabase():
 # ─── Request / Response models ────────────────────────────────────────────────
 
 
-DEFAULT_PLATFORMS = ["twitter", "linkedin", "instagram"]
+class CampaignBrief(BaseModel):
+    what_changed: str = Field(min_length=1, max_length=2000)
+    why_it_matters: str = Field(default="", max_length=2000)
+    target_audience: str = Field(default="", max_length=1000)
+    proof_points: list[str] = Field(default_factory=list, max_length=8)
+    call_to_action: str = Field(default="", max_length=500)
+
+
+class CampaignChannelPlan(BaseModel):
+    platform: str
+    format: str
+    rationale: str
+
+
+class CampaignAngle(BaseModel):
+    title: str
+    audience_focus: str
+    core_message: str
+    proof_to_use: list[str] = Field(default_factory=list)
+    call_to_action: str
+    why_this_works: str
+
+
+class CampaignPlan(BaseModel):
+    campaign_headline: str
+    summary: str
+    primary_angle: CampaignAngle
+    alternate_angles: list[str] = Field(default_factory=list)
+    channels: list[CampaignChannelPlan] = Field(default_factory=list)
+    recommended_prompt: str
+    approval_checklist: list[str] = Field(default_factory=list)
+
+
+class CampaignPlanRequest(BaseModel):
+    brief: CampaignBrief
+    brand_voice: str | None = Field(default=None, max_length=5000)
+    brand_dna: BrandDNA | None = None
+    platforms: list[str] = Field(
+        default_factory=lambda: DEFAULT_PLATFORMS.copy(),
+        min_length=1,
+        max_length=len(PLATFORM_CONSTRAINTS),
+    )
+
+
+class CampaignPlanResponse(BaseModel):
+    plan: CampaignPlan
+    success: bool
+    message: str = ""
 
 
 class CampaignLaunchRequest(BaseModel):
-    content_request: str
-    brand_voice: str | None = None          # optional; falls back to stored DNA voice
+    content_request: str = Field(min_length=1, max_length=4000)
+    brand_voice: str | None = Field(default=None, max_length=5000)  # optional; falls back to stored DNA voice
     brand_dna: BrandDNA | None = None       # optional pre-scraped DNA
-    platforms: list[str] = DEFAULT_PLATFORMS
+    platforms: list[str] = Field(
+        default_factory=lambda: DEFAULT_PLATFORMS.copy(),
+        min_length=1,
+        max_length=len(PLATFORM_CONSTRAINTS),
+    )
 
 
 class CampaignLaunchResponse(BaseModel):
@@ -339,9 +542,9 @@ class CampaignLaunchResponse(BaseModel):
 
 
 class EditRequest(BaseModel):
-    original_content: str
-    brand_voice: str
-    edit_command: str
+    original_content: str = Field(min_length=1, max_length=12000)
+    brand_voice: str = Field(min_length=1, max_length=5000)
+    edit_command: str = Field(min_length=1, max_length=32)
 
 
 class EditResponse(BaseModel):
@@ -351,8 +554,8 @@ class EditResponse(BaseModel):
 
 
 class OnboardRequest(BaseModel):
-    url: str
-    user_id: str | None = None
+    url: str = Field(min_length=1, max_length=2048)
+    user_id: str | None = Field(default=None, max_length=128)
 
 
 class OnboardResponse(BaseModel):
@@ -363,7 +566,7 @@ class OnboardResponse(BaseModel):
 
 class WatchdogResponse(BaseModel):
     new_products_detected: bool
-    draft_campaigns: list[dict] = []
+    draft_campaigns: list[dict] = Field(default_factory=list)
     message: str = ""
 
 
@@ -388,6 +591,29 @@ _EDIT_SYSTEM = (
 # ─── API Routes ───────────────────────────────────────────────────────────────
 
 
+@router.post("/plan", response_model=CampaignPlanResponse)
+async def plan_campaign(req: CampaignPlanRequest):
+    """Turn a product update plus proof into an approval-ready campaign plan."""
+    voice = _resolve_voice(req.brand_voice, req.brand_dna)
+    valid_platforms = _normalize_platforms(req.platforms)
+    if not valid_platforms:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No valid platforms. Choose from: {list(PLATFORM_CONSTRAINTS.keys())}",
+        )
+
+    try:
+        plan = await _plan_campaign(req.brief, voice, valid_platforms)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Campaign planning failed: {exc}") from exc
+
+    return CampaignPlanResponse(
+        plan=plan,
+        success=True,
+        message=f"Campaign plan created for: {', '.join(valid_platforms)}",
+    )
+
+
 @router.post("/launch", response_model=CampaignLaunchResponse)
 async def launch_campaign(req: CampaignLaunchRequest):
     """
@@ -403,8 +629,7 @@ async def launch_campaign(req: CampaignLaunchRequest):
             status_code=422,
             detail="Provide brand_voice or brand_dna with a voice_personality.",
         )
-
-    valid_platforms = [p for p in req.platforms if p in PLATFORM_CONSTRAINTS]
+    valid_platforms = _normalize_platforms(req.platforms)
     if not valid_platforms:
         raise HTTPException(
             status_code=400,
@@ -444,8 +669,8 @@ async def edit_draft(req: EditRequest):
             f"[ORIGINAL CONTENT TO EDIT]\n{req.original_content}\n\n"
             f"[EDITING INSTRUCTION]\n{instruction}"
         )
-        resp = client.models.generate_content(
-            model=MODEL_ID,
+        resp = await _generate_content_with_retry(
+            client=client,
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 system_instruction=_EDIT_SYSTEM,
@@ -511,7 +736,7 @@ async def watchdog_check(
     if not page_ctx:
         return WatchdogResponse(new_products_detected=False, message="Could not fetch page.")
 
-    current_hash = hashlib.md5(page_ctx.encode()).hexdigest()
+    current_hash = hashlib.sha256(page_ctx.encode()).hexdigest()
 
     if last_known_hash and current_hash == last_known_hash:
         return WatchdogResponse(
@@ -530,8 +755,8 @@ async def watchdog_check(
             "platforms should be an array from: ['twitter', 'linkedin', 'instagram'].\n\n"
             f"WEBSITE CONTENT:\n{page_ctx[:4000]}"
         )
-        resp = client.models.generate_content(
-            model=MODEL_ID,
+        resp = await _generate_content_with_retry(
+            client=client,
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 response_mime_type="application/json",

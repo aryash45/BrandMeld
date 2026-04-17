@@ -51,7 +51,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           },
         });
         if (signUpError) throw signUpError;
-        setEmailSent(true);
+        onClose();
+        navigate('/dashboard');
       }
     } catch (err: unknown) {
       const message =

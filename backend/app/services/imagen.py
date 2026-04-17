@@ -1,6 +1,6 @@
 """
 imagen.py — Legacy image generation shim
-This endpoint is disabled in v0 because gemini-2.0-flash-exp does not
+This endpoint is disabled in v0 because Gemini Flash text models do not
 return image blobs via generate_content(). Real image generation will
 be added in v1 using Imagen 3 or Photoroom API.
 
