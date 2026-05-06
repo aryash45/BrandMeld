@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 interface SidebarProps {
@@ -7,118 +7,180 @@ interface SidebarProps {
   onClose: () => void;
 }
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: string; // Using Material Symbols names like 'dashboard'
-}
+const NAV = [
+  { to: '/dashboard', label: 'Dashboard', icon: '⬡' },
+  { to: '/content',   label: 'Content',   icon: '✦' },
+  { to: '/campaigns', label: 'Campaigns', icon: '◈' },
+  { to: '/seo',       label: 'SEO',       icon: '◎' },
+  { to: '/analytics', label: 'Analytics', icon: '▸' },
+  { to: '/competitors',label:'Competitors',icon: '◇' },
+  { to: '/ai-studio', label: 'AI Studio', icon: '∿' },
+  { to: '/automations',label:'Automations',icon: '⟳' },
+];
 
-const NAV_ITEMS: NavItem[] = [
-  {
-    to: '/dashboard',
-    label: 'TODAY',
-    icon: 'dashboard',
-  },
-  {
-    to: '/history',
-    label: 'LIBRARY',
-    icon: 'archive',
-  },
-  {
-    to: '/settings',
-    label: 'SETTINGS',
-    icon: 'settings_applications',
-  },
+const AI_ACTIONS = [
+  { label: 'Generate 30-day content plan',  color: 'var(--accent)' },
+  { label: 'Fix declining SEO keywords',    color: 'var(--red)' },
+  { label: 'Repurpose top-performing post', color: 'var(--green)' },
+  { label: 'Analyze competitor gaps',       color: 'var(--amber)' },
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [aiOpen, setAiOpen] = useState(true);
+
+  const displayName = (user?.user_metadata?.name as string | undefined)
+    ?? user?.email?.split('@')[0]
+    ?? 'Founder';
+
+  const initials = displayName.slice(0, 2).toUpperCase();
 
   const handleSignOut = async () => {
     await signOut();
     navigate('/');
   };
 
-  const navClass = ({ isActive }: { isActive: boolean }) =>
-    isActive
-      ? 'bg-brand-yellow text-black font-bold flex items-center p-4 transition-colors'
-      : 'text-white flex items-center p-4 hover:bg-white hover:text-black transition-colors';
-
-  const displayName = (user?.user_metadata?.name as string | undefined) ?? user?.email?.split('@')[0] ?? 'OPERATOR';
+  const isActive = (to: string) =>
+    to === '/dashboard' ? location.pathname === '/dashboard' : location.pathname.startsWith(to);
 
   return (
     <>
       {/* Mobile backdrop */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/80 lg:hidden"
+          style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
           onClick={onClose}
         />
       )}
 
-      {/* Cyber-Industrial Sidebar */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r-2 border-white bg-[#0E0E0E] font-label uppercase text-xs transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        {/* Header */}
-        <div className="p-6 border-b-2 border-white shrink-0">
-          <div className="text-white font-bold text-lg font-headline tracking-tighter">BRANDMELD</div>
-          <div className="text-brand-cyan opacity-70 mt-1">V.02-ALPHA</div>
-          <div className="text-white opacity-50 mt-1">[SYS_ID: {user?.id?.slice(0, 8) || '00000000'}]</div>
+      <aside style={{
+        position: 'fixed',
+        inset: '0 auto 0 0',
+        zIndex: 50,
+        width: 'var(--sidebar-w)',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--bg-surface)',
+        borderRight: '1px solid var(--border)',
+        transform: isOpen ? 'translateX(0)' : undefined,
+        transition: 'transform var(--transition)',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+      }}>
+
+        {/* Logo */}
+        <div style={{ padding: '20px 18px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 8,
+              background: 'linear-gradient(135deg, var(--accent) 0%, var(--blue) 100%)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 13, fontWeight: 900, color: '#fff', flexShrink: 0,
+            }}>B</div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+              BrandMeld
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '2px 7px', borderRadius: 99, fontWeight: 600 }}>
+              AI
+            </span>
+          </div>
         </div>
 
-        {/* Action Button */}
-        <button
-          onClick={() => {
-            navigate('/dashboard');
-            onClose();
-          }}
-          className="m-4 p-4 bg-brand-yellow text-black border-2 border-black font-bold flex items-center justify-between hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0px_0px_white] transition-all"
-        >
-          <span>NEW CAMPAIGN</span>
-          <span className="material-symbols-outlined ml-2">add</span>
-        </button>
+        {/* AI Action Center */}
+        <div style={{ borderBottom: '1px solid var(--border)' }}>
+          <button
+            onClick={() => setAiOpen(o => !o)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+              padding: '12px 18px', background: 'none', border: 'none',
+              cursor: 'pointer', color: 'var(--text-secondary)', fontFamily: 'inherit',
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', flex: 1, textAlign: 'left' }}>
+              ⚡ AI Actions
+            </span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ transform: aiOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }}>
+              <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
 
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto custom-scrollbar border-t-2 border-white">
-          {NAV_ITEMS.map((item) => (
-            <NavLink key={item.to} to={item.to} className={navClass} onClick={onClose}>
-              {({ isActive }) => (
-                <>
-                  <span className="material-symbols-outlined mr-3">{item.icon}</span>
-                  {item.label}
-                  {isActive && <span className="ml-auto">{'<'}</span>}
-                </>
-              )}
+          {aiOpen && (
+            <div style={{ padding: '0 10px 12px' }}>
+              {AI_ACTIONS.map((a, i) => (
+                <button
+                  key={i}
+                  onClick={() => navigate('/ai-studio')}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    fontFamily: 'inherit', textAlign: 'left',
+                    transition: 'background var(--transition)',
+                    color: 'var(--text-secondary)', fontSize: 12,
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: a.color, flexShrink: 0 }} />
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Nav */}
+        <nav style={{ flex: 1, padding: '8px 10px' }}>
+          {NAV.map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              onClick={onClose}
+              style={({ isActive: linkActive }) => ({
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 10px',
+                borderRadius: 'var(--radius-sm)',
+                marginBottom: 2,
+                fontSize: 13.5,
+                fontWeight: linkActive || isActive(item.to) ? 600 : 400,
+                color: linkActive || isActive(item.to) ? 'var(--accent-light)' : 'var(--text-secondary)',
+                background: linkActive || isActive(item.to) ? 'var(--accent-dim)' : 'transparent',
+                textDecoration: 'none',
+                transition: 'all var(--transition)',
+                borderLeft: linkActive || isActive(item.to) ? '2px solid var(--accent)' : '2px solid transparent',
+              })}
+            >
+              <span style={{ fontSize: 13, width: 18, textAlign: 'center', flexShrink: 0 }}>{item.icon}</span>
+              {item.label}
             </NavLink>
           ))}
         </nav>
 
-        {/* Footer / Status */}
-        <div className="p-4 border-t-2 border-white bg-surface-container-lowest shrink-0">
-          <div className="flex items-center justify-between text-white mb-4">
-            <div className="flex items-center">
-              <span className="material-symbols-outlined mr-3 text-brand-cyan">lan</span>
-              <span>NETWORK_STATUS</span>
+        {/* Footer */}
+        <div style={{ padding: '12px 14px', borderTop: '1px solid var(--border)' }}>
+          <NavLink
+            to="/settings"
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: 13, textDecoration: 'none', marginBottom: 8 }}
+          >
+            <span>⚙</span> Settings
+          </NavLink>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: '50%',
+              background: 'linear-gradient(135deg, var(--accent), var(--blue))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0,
+            }}>{initials}</div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Free plan</div>
             </div>
-            <div className="w-2 h-2 bg-brand-yellow rounded-none animate-pulse"></div>
-          </div>
-          
-          {/* User Signout */}
-          <div className="flex items-center justify-between pt-4 border-t border-white/20">
-            <div className="flex items-center gap-2 truncate pr-2 opacity-80 hover:opacity-100 transition-opacity">
-              <span className="material-symbols-outlined text-sm">person</span>
-              <span className="truncate">{displayName}</span>
-            </div>
-            <button
-              onClick={handleSignOut}
-              title="TERMINATE_SESSION"
-              className="text-white hover:text-red-500 transition-colors"
-            >
-              <span className="material-symbols-outlined font-bold">power_settings_new</span>
+            <button onClick={handleSignOut} title="Sign out" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, borderRadius: 4, flexShrink: 0 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             </button>
           </div>
         </div>

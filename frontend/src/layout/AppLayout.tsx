@@ -1,46 +1,57 @@
-/**
- * AppLayout — The persistent authenticated shell.
- *
- * Provides:
- *  - Sidebar navigation (collapsible on mobile)
- *  - Topbar with hamburger menu toggle on mobile
- *  - Main content area via <Outlet /> (React Router's child route renderer)
- *
- * The layout does NOT render for the landing page — that route sits outside
- * the ProtectedRoute → AppLayout nesting, so it has its own full-screen design.
- */
 import React, { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 
 const AppLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100 font-body">
+    <div style={{ display: 'flex', height: '100vh', background: 'var(--bg-base)', overflow: 'hidden' }}>
+      {/* Sidebar — always shown on desktop, slide-in on mobile */}
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Main content area offset by sidebar width on desktop */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        marginLeft: 'var(--sidebar-w)',
+      }}>
         {/* Mobile topbar */}
-        <header className="flex items-center gap-4 border-b border-white/5 bg-slate-950 px-4 py-3 lg:hidden">
+        <header style={{
+          display: 'none',
+          alignItems: 'center',
+          gap: 12,
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-surface)',
+        }} className="mobile-topbar">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
-            aria-label="Open navigation menu"
-            aria-expanded={sidebarOpen}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: 4 }}
+            aria-label="Open navigation"
           >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
-          <span className="font-display text-base font-bold text-white">BrandMeld</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>BrandMeld</span>
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto">
+        <main key={location.pathname} style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
           <Outlet />
         </main>
       </div>
+
+      <style>{`
+        @media (max-width: 768px) {
+          .mobile-topbar { display: flex !important; }
+          div[style*="margin-left: var(--sidebar-w)"] { margin-left: 0 !important; }
+        }
+      `}</style>
     </div>
   );
 };
