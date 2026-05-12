@@ -1,13 +1,13 @@
 """
 BrandMeld API — main.py
 ========================
-All traffic routes through /v1/campaign/*.
+All traffic routes through /v1/campaign/* (V1) and /v1/* (V2).
 
 Security
 --------
-Every route under /v1/campaign/* (and legacy /api/*) is protected by
-JWT middleware that validates the Authorization: Bearer <token> header
-against the Supabase JWT secret.  Public routes: /health, /docs, /openapi.json.
+Every route under /v1/* is protected by JWT middleware that validates
+the Authorization: Bearer <token> header against the Supabase JWT secret.
+Public routes: /health, /docs, /openapi.json, /redoc, /v1/auth/linkedin/callback
 """
 
 from dotenv import load_dotenv
@@ -29,11 +29,24 @@ from app.services.factory import router as _factory_router  # noqa: F401
 from app.services.auditor import router as _auditor_router  # noqa: F401
 from app.services.imagen import router as _imagen_router    # noqa: F401
 
+# ── V2 routers ─────────────────────────────────────────────────────────────
+from app.routers.publishing import router as publishing_router, linkedin_callback_router
+from app.routers.analytics import router as analytics_router
+from app.routers.marketplace import router as marketplace_router
+from app.routers.prompts import router as prompts_router
+from app.routers.settings import settings_router, onboarding_router, score_router
+
 logger = logging.getLogger(__name__)
 
 # ── JWT config ────────────────────────────────────────────────────────────────
 # Routes that don't require a valid JWT
-_PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+_PUBLIC_PATHS = {
+    "/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+    "/v1/auth/linkedin/callback",  # OAuth callback must be public
+}
 
 
 app = FastAPI(
@@ -71,7 +84,6 @@ def _get_supabase_auth_key() -> str:
 @lru_cache(maxsize=8)
 def _build_supabase_auth_client(url: str, key: str):
     from supabase import create_client
-
     return create_client(url, key).auth
 
 
@@ -87,13 +99,11 @@ async def _verify_supabase_token(token: str) -> bool:
     auth_client = _get_supabase_auth_client()
     if auth_client is None:
         return False
-
     try:
         user_response = await asyncio.to_thread(auth_client.get_user, token)
     except Exception as exc:
         logger.warning("Supabase token verification failed: %s", exc)
         return False
-
     return bool(getattr(user_response, "user", None))
 
 
@@ -115,7 +125,7 @@ app.add_middleware(
 )
 
 
-# ── Auth middleware ────────────────────────────────────────────────────────────
+# ── Security headers middleware ────────────────────────────────────────────────
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -128,12 +138,12 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
+# ── JWT auth middleware ────────────────────────────────────────────────────────
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     """
     Validate Authorization: Bearer <token> for all non-public routes.
-    Returns 401 if the token is missing or invalid.
-    Skips validation when SUPABASE_JWT_SECRET is not configured (dev mode).
+    Attaches user_id to request.state for downstream use.
     """
     if request.url.path in _PUBLIC_PATHS or request.method == "OPTIONS":
         return await call_next(request)
@@ -141,12 +151,13 @@ async def jwt_auth_middleware(request: Request, call_next):
     jwt_secret = _get_supabase_jwt_secret()
     auth_client = _get_supabase_auth_client()
 
-    # If no verifier is configured, warn but let requests through (dev mode)
+    # Dev mode: no verifier configured → let requests through
     if not jwt_secret and auth_client is None:
         logger.warning(
             "No Supabase token verifier configured — auth middleware is DISABLED. "
-            "Set SUPABASE_JWT_SECRET for symmetric JWTs or SUPABASE_URL with a Supabase auth key."
+            "Set SUPABASE_JWT_SECRET for production."
         )
+        request.state.user_id = "dev-user"
         return await call_next(request)
 
     cors_headers = _build_cors_headers(request)
@@ -156,7 +167,7 @@ async def jwt_auth_middleware(request: Request, call_next):
         return JSONResponse(
             status_code=401,
             content={"detail": "Missing or malformed Authorization header. Expected: Bearer <token>"},
-            headers=cors_headers
+            headers=cors_headers,
         )
 
     token = auth_header.removeprefix("Bearer ").strip()
@@ -166,16 +177,20 @@ async def jwt_auth_middleware(request: Request, call_next):
         return JSONResponse(status_code=401, content={"detail": "Invalid authentication token."}, headers=cors_headers)
 
     algorithm = str(header.get("alg", "")).upper()
+    user_id: str | None = None
     try:
         if algorithm.startswith("HS") and jwt_secret:
-            pyjwt.decode(
+            payload = pyjwt.decode(
                 token,
                 jwt_secret,
                 algorithms=["HS256", "HS384", "HS512"],
-                options={"verify_aud": False},   # Supabase sets aud=authenticated; skip strict check
+                options={"verify_aud": False},
             )
+            user_id = payload.get("sub")
         elif auth_client is not None and await _verify_supabase_token(token):
-            pass
+            # Decode without verification just to extract sub
+            payload = pyjwt.decode(token, options={"verify_signature": False})
+            user_id = payload.get("sub")
         else:
             return JSONResponse(
                 status_code=401,
@@ -187,13 +202,27 @@ async def jwt_auth_middleware(request: Request, call_next):
     except pyjwt.InvalidTokenError:
         return JSONResponse(status_code=401, content={"detail": "Invalid authentication token."}, headers=cors_headers)
 
+    # Attach user_id to request.state — used by all V2 routers
+    request.state.user_id = user_id or "unknown"
     return await call_next(request)
 
 
-# ── Primary router — all new traffic goes here ─────────────────────────────────
+# ── V1 Campaign router (existing) ─────────────────────────────────────────────
 app.include_router(engine_router, prefix="/v1/campaign", tags=["campaign"])
 
-# ── Legacy shims — keep old clients working during migration ───────────────────
+# ── V2 routers ────────────────────────────────────────────────────────────────
+app.include_router(publishing_router, prefix="/v1")
+app.include_router(analytics_router, prefix="/v1")
+app.include_router(marketplace_router, prefix="/v1")
+app.include_router(prompts_router, prefix="/v1")
+app.include_router(settings_router, prefix="/v1")
+app.include_router(onboarding_router, prefix="/v1")
+app.include_router(score_router, prefix="/v1")
+
+# LinkedIn OAuth callback (public — no JWT required)
+app.include_router(linkedin_callback_router, prefix="/v1")
+
+# ── Legacy shims ──────────────────────────────────────────────────────────────
 app.include_router(_factory_router, prefix="/api/factory", tags=["factory (deprecated)"])
 app.include_router(_auditor_router, prefix="/api/auditor", tags=["auditor (deprecated)"])
 app.include_router(_imagen_router,  prefix="/api/imagen",  tags=["imagen (deprecated)"])
