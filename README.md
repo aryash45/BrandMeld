@@ -1,25 +1,34 @@
-# BrandMeld V0
+<div align="center">
+  <img src="./assets/Logo.png" alt="BrandMeld Logo" width="400" />
+</div>
 
-AI-powered brand voice analysis and content generation platform.
+# BrandMeld  — Autonomous AI Growth OS
 
-BrandMeld is a full-stack content distribution platform designed to help founders and creators maintain a consistent personal brand. It utilizes Google Gemini Flash to extract a user's unique "Brand DNA" from their existing content, and then generates new, platform-specific content (Twitter/LinkedIn) that goes through an internal auditing gate to ensure strict adherence to that voice.
+BrandMeld has evolved from a traditional SaaS tool into a category-defining, **autonomous AI growth operating system**. Built for founders and creators, it transforms how you approach personal branding by acting as your dedicated growth engine — featuring a premium dark-mode interface, an AI Action Center, and daily intelligence briefings.
+
+<div align="center">
+  <img src="./assets/Dashboard.png" alt="BrandMeld Dashboard" width="800" />
+</div>
 
 ---
 
-## 🚀 Core Features
+## 🚀 The AI Growth Engine
 
-### 1. Brand Identity Extraction
-Provide a website or text sample. The system uses the **Gemini Flash** model family to deconstruct syntax, tone, pacing, and vocabulary, generating a deterministic voice profile for future content.
+### 1. AI Action Center & Daily Briefings
+Start your day with an AI-generated intelligence briefing. The system analyzes your performance, tracks your SEO metrics, and provides an actionable daily checklist of tasks (e.g., "Repurpose viral thread", "Fix declining SEO keywords").
 
-### 2. The Distribution Engine
-Generate platform-specific content (e.g., LinkedIn posts, Twitter threads, newsletters) by passing prompts through your customized brand-voice model.
+### 2. Premium "Dark Mode" Design
+A high-end, sophisticated user interface designed for maximum focus and low friction. Our new design system ensures that everything from your analytics dashboard to your content editor feels responsive, premium, and distraction-free.
 
-### 3. Native Self-Correction & Auditing
-All generated content is automatically routed through an internal Auditor. Output is scored (0-100) against your extracted Brand DNA. If the content fails the threshold, the system self-corrects and rewrites the content before returning it to the user.
+### 3. AI-Native Content Creation
+Generate platform-specific content (LinkedIn posts, Twitter threads, newsletters) instantly. The engine runs your ideas through an internal auditing gate to ensure strict adherence to your unique "Brand DNA" — without the marketing busywork.
+
+### 4. Recommendation-First Workflows
+Say goodbye to blank-page syndrome. BrandMeld proactively suggests content gaps, competitor analysis insights, and repurposing opportunities based on what’s actually working for you.
 
 ## 🏗️ Architecture
 
-The application is built entirely as a decoupling of a React single-page frontend and a FastAPI backend. Authentication state is handled via Supabase Auth.
+The application is decoupled into a modern React frontend and a robust FastAPI backend.
 
 ```
 BrandMeld-CloudRunHackathon/
@@ -30,10 +39,11 @@ BrandMeld-CloudRunHackathon/
 │   │   │   └── engine.py      # Core Gemini generation & self-auditing logic
 │   ├── Dockerfile             # Container configuration for Cloud Run
 │   └── requirements.txt       # Python dependencies
-├── frontend/                  # React + Vite + Tailwind CSS
+├── frontend/                  # React + Vite + Tailwind CSS (Dark Mode)
+│   ├── public/                # Static assets
 │   ├── src/
 │   │   ├── components/        # Isolated UI components (Auth, Dashboard)
-│   │   ├── services/          # Supabase client & Backend API hooks
+│   │   ├── pages/             # App pages and views
 │   │   └── App.tsx            # Main application router
 │   └── index.html             # Entry point
 └── deploy.ps1                 # Deployment script for Google Cloud Run
@@ -45,7 +55,7 @@ BrandMeld-CloudRunHackathon/
 - **Python 3.11+**
 - **Node.js 18+**
 - **Supabase Account** (For Auth integration)
-- **Google Gemini API Key** ([Get one here](https://aistudio.google.com/app/apikey))
+- **Google Gemini API Key**
 
 ### Environment Configuration
 
@@ -82,22 +92,21 @@ cd frontend
 npm install
 npm run dev
 ```
-*Access the dashboard at `http://localhost:3000`*
+*Access the AI dashboard at `http://localhost:3000`*
 
 ## ☁️ Cloud Run Deployment
 
 Deployment is automated via PowerShell script for GCP Cloud Run environments.
 
-1. Ensure the `gcloud` CLI is installed and configured with your target GCP project.
+1. Ensure the `gcloud` CLI is installed and configured.
 2. Run the deployment sequence from the root directory:
 ```powershell
 .\deploy.ps1
 ```
-The script will build the Dockerfile and deploy the backend service automatically.
 
-## 📡 Key API Routes
+## 📡 API Endpoints
 
-All core brand logic has been consolidated under `/v1/campaign/*` logic endpoints:
+All core brand logic has been consolidated under `/v1/campaign/*` endpoints:
 
 - `POST /v1/campaign/onboard` - Extracts detailed Brand DNA using Gemini from an input URL/text.
 - `POST /v1/campaign/launch` - Generates payload targeted for specific platforms and natively triggers the internal self-audit loop.
@@ -105,4 +114,4 @@ All core brand logic has been consolidated under `/v1/campaign/*` logic endpoint
 
 ---
 
-**Built for People Who Hate Marketing** 🚀
+**BrandMeld — The Personal Distribution Engine for People Who Hate Marketing.** 🚀
