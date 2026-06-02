@@ -17,6 +17,7 @@ from typing import Optional
 
 from app.config import get_settings
 from app.models.marketplace import WeeklyPrompt, UserPreferences
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +34,13 @@ _DEFAULT_PROMPTS = [
 ]
 
 
-def _get_sb():
-    from supabase import create_client
-    s = get_settings()
-    if not s.supabase_url:
-        return None
-    return create_client(s.supabase_url, s.supabase_service_role_key)
-
 
 async def get_current_prompt(user_id: str) -> Optional[WeeklyPrompt]:
     """
     Get the most recent unanswered prompt for this user.
     If none exists, generate a new one.
     """
-    sb = _get_sb()
+    sb = get_supabase_client()
     if not sb:
         # Dev fallback: return a static prompt
         return WeeklyPrompt(

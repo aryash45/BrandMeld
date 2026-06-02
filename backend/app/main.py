@@ -24,11 +24,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.services.engine import router as engine_router
 
-# ── Legacy compatibility shims (kept so old /api/factory/* calls don't 404) ──
-from app.services.factory import router as _factory_router  # noqa: F401
-from app.services.auditor import router as _auditor_router  # noqa: F401
-from app.services.imagen import router as _imagen_router    # noqa: F401
-
 # ── V2 routers ─────────────────────────────────────────────────────────────
 from app.routers.publishing import router as publishing_router, linkedin_callback_router
 from app.routers.analytics import router as analytics_router
@@ -222,11 +217,6 @@ app.include_router(score_router, prefix="/v1")
 # LinkedIn OAuth callback (public — no JWT required)
 app.include_router(linkedin_callback_router, prefix="/v1")
 
-# ── Legacy shims ──────────────────────────────────────────────────────────────
-app.include_router(_factory_router, prefix="/api/factory", tags=["factory (deprecated)"])
-app.include_router(_auditor_router, prefix="/api/auditor", tags=["auditor (deprecated)"])
-app.include_router(_imagen_router,  prefix="/api/imagen",  tags=["imagen (deprecated)"])
-
 
 @app.get("/health", tags=["meta"])
 async def health():
@@ -236,7 +226,19 @@ async def health():
 # ── /v1/discovery shim — keeps useBrandKit + fetchBrandDNA working ────────────
 from fastapi import HTTPException as _HTTPException  # noqa: E402
 from app.services.engine import _extract_brand_dna, BrandDNA as _BrandDNA  # noqa: E402
-from app.services.supabase import SupabaseService as _SupabaseService  # noqa: E402
+
+
+def _get_supabase_for_discovery():
+    """Returns a Supabase client or None if env vars are missing."""
+    try:
+        from supabase import create_client
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if url and key:
+            return create_client(url, key)
+    except Exception:
+        pass
+    return None
 
 
 @app.post("/v1/discovery", tags=["discovery (deprecated)"])

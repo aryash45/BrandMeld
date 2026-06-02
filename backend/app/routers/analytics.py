@@ -13,16 +13,11 @@ from fastapi import APIRouter, Depends, Request, Query, HTTPException
 
 from app.models.analytics import AnalyticsSummaryResponse
 from app.services import analytics_service
+from app.shared.deps import get_user_id
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analytics", tags=["analytics"])
-
-
-def _user_id(request: Request) -> str:
-    uid = getattr(request.state, "user_id", None)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return uid
 
 
 @router.get("", response_model=AnalyticsSummaryResponse)
@@ -36,7 +31,7 @@ async def get_analytics(
     Return engagement summary, top posts, platform breakdown, and insights
     for the authenticated user.
     """
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     return await analytics_service.get_analytics_summary(
         user_id=user_id,
         from_date=from_date,
@@ -48,15 +43,10 @@ async def get_analytics(
 @router.get("/post/{post_id}")
 async def get_post_analytics(post_id: str, request: Request):
     """Return engagement detail for a single published post."""
-    user_id = _user_id(request)
-    from app.config import get_settings
-    from supabase import create_client
-
-    s = get_settings()
-    if not s.supabase_url:
+    user_id = get_user_id(request)
+    sb = get_supabase_client()
+    if not sb:
         raise HTTPException(status_code=503, detail="DB not configured")
-
-    sb = create_client(s.supabase_url, s.supabase_service_role_key)
 
     post_r = (
         sb.table("published_posts")

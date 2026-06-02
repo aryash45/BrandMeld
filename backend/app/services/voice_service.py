@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from app.config import get_settings
 from app.models.brand import AuthenticityScore
+from app.core.gemini import get_gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,8 @@ async def score_draft(draft: str, voice_personality: str) -> AuthenticityScore:
     )
 
     try:
-        client = genai.Client(api_key=settings.gemini_api_key)
+        from google.genai import types as genai_types
+        client = get_gemini_client()
         resp = await __import__("asyncio").to_thread(
             lambda: client.models.generate_content(
                 model=settings.gemini_model_id,

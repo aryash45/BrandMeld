@@ -19,6 +19,7 @@ from app.models.marketplace import (
     ForkResponse,
     AngleTemplate,
 )
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +78,6 @@ ANGLE_TEMPLATES: list[AngleTemplate] = [
 ]
 
 
-def _get_sb():
-    from supabase import create_client
-    s = get_settings()
-    if not s.supabase_url:
-        return None
-    return create_client(s.supabase_url, s.supabase_service_role_key)
-
 
 async def list_voices(
     category: Optional[str] = None,
@@ -92,7 +86,7 @@ async def list_voices(
     limit: int = 12,
 ) -> MarketplaceListResponse:
     """List marketplace voices with optional filtering."""
-    sb = _get_sb()
+    sb = get_supabase_client()
     if not sb:
         return MarketplaceListResponse(voices=[], total_count=0, page=page, limit=limit)
 
@@ -137,7 +131,7 @@ async def list_voices(
 
 async def get_voice(voice_id: str) -> Optional[dict]:
     """Get full voice detail."""
-    sb = _get_sb()
+    sb = get_supabase_client()
     if not sb:
         return None
     r = sb.table("voice_marketplace_entries").select("*").eq("id", voice_id).maybe_single().execute()
@@ -149,7 +143,7 @@ async def fork_voice(user_id: str, voice_id: str, customizations: Optional[dict]
     Fork a marketplace voice into the user's brand_dna.
     Merges any customizations, increments fork_count.
     """
-    sb = _get_sb()
+    sb = get_supabase_client()
     if not sb:
         return ForkResponse(brand_dna={}, forked_from="", success=False, message="DB not configured")
 

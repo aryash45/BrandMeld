@@ -16,16 +16,11 @@ from pydantic import BaseModel, Field
 
 from app.models.marketplace import MarketplaceListResponse, ForkRequest, ForkResponse, AngleTemplate
 from app.services import marketplace_service
+from app.shared.deps import get_user_id
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/marketplace", tags=["marketplace"])
-
-
-def _user_id(request: Request) -> str:
-    uid = getattr(request.state, "user_id", None)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return uid
 
 
 @router.get("/voices", response_model=MarketplaceListResponse)
@@ -37,7 +32,7 @@ async def list_voices(
     limit: int = Query(default=12, ge=1, le=50),
 ):
     """List marketplace voices with optional filtering and sorting."""
-    _user_id(request)
+    get_user_id(request)
     return await marketplace_service.list_voices(
         category=category, sort=sort, page=page, limit=limit
     )
@@ -46,7 +41,7 @@ async def list_voices(
 @router.get("/voices/{voice_id}")
 async def get_voice_detail(voice_id: str, request: Request):
     """Get full voice profile including sample posts and comments."""
-    _user_id(request)
+    get_user_id(request)
     voice = await marketplace_service.get_voice(voice_id)
     if not voice:
         raise HTTPException(status_code=404, detail="Voice not found")
@@ -56,7 +51,7 @@ async def get_voice_detail(voice_id: str, request: Request):
 @router.post("/voices/{voice_id}/fork", response_model=ForkResponse, status_code=201)
 async def fork_voice(voice_id: str, req: ForkRequest, request: Request):
     """Fork a marketplace voice into the authenticated user's Brand DNA."""
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     return await marketplace_service.fork_voice(user_id, voice_id, req.customizations)
 
 
@@ -68,15 +63,10 @@ class RateRequest(BaseModel):
 @router.post("/voices/{voice_id}/rate", status_code=201)
 async def rate_voice(voice_id: str, req: RateRequest, request: Request):
     """Submit a 1–5 star rating for a marketplace voice."""
-    user_id = _user_id(request)
-    from app.config import get_settings
-    from supabase import create_client
-
-    s = get_settings()
-    if not s.supabase_url:
+    user_id = get_user_id(request)
+    sb = get_supabase_client()
+    if not sb:
         return {"success": True, "note": "Rating not persisted (DB not configured)"}
-
-    sb = create_client(s.supabase_url, s.supabase_service_role_key)
     if req.comment:
         sb.table("voice_marketplace_comments").insert({
             "voice_entry_id": voice_id,
@@ -109,5 +99,5 @@ async def get_angle_templates(
     category: Optional[str] = Query(default=None),
 ):
     """Return campaign angle templates, optionally filtered by category."""
-    _user_id(request)
+    get_user_id(request)
     return marketplace_service.get_angle_templates(category)

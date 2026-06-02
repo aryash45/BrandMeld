@@ -26,16 +26,11 @@ from app.integrations.linkedin_client import (
     exchange_linkedin_code,
 )
 from app.config import get_settings
+from app.shared.deps import get_user_id
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/publish", tags=["publishing"])
-
-
-def _user_id(request: Request) -> str:
-    uid = getattr(request.state, "user_id", None)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return uid
 
 
 # ── Publishing ─────────────────────────────────────────────────────────────
@@ -47,7 +42,7 @@ async def publish_content(req: PublishRequest, request: Request):
     - LinkedIn: full API post
     - Twitter: returns Web Intent URL (user tweets manually)
     """
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     return await publishing_service.publish(user_id, req)
 
 
@@ -61,14 +56,10 @@ class ScheduleRequest(BaseModel):
 @router.post("/schedule", response_model=PublishResponse)
 async def schedule_post(req: ScheduleRequest, request: Request):
     """Store a post for future publishing (APScheduler picks it up)."""
-    user_id = _user_id(request)
-
-    # Save as 'scheduled' status in Supabase
-    from supabase import create_client
-    s = get_settings()
-    if not s.supabase_url:
+    user_id = get_user_id(request)
+    sb = get_supabase_client()
+    if not sb:
         raise HTTPException(status_code=503, detail="Database not configured")
-    sb = create_client(s.supabase_url, s.supabase_service_role_key)
 
     ids: dict[str, str] = {}
     for platform in req.platforms:
@@ -101,13 +92,10 @@ async def schedule_post(req: ScheduleRequest, request: Request):
 @router.get("/connected")
 async def get_connected_accounts(request: Request):
     """Return which platforms are connected for this user."""
-    user_id = _user_id(request)
-    s = get_settings()
-    if not s.supabase_url:
+    user_id = get_user_id(request)
+    sb = get_supabase_client()
+    if not sb:
         return {"linkedin": {"connected": False}, "twitter": {"connected": False}}
-
-    from supabase import create_client
-    sb = create_client(s.supabase_url, s.supabase_service_role_key)
     result = (
         sb.table("connected_accounts")
         .select("platform, account_identifier")
@@ -128,7 +116,7 @@ async def get_connected_accounts(request: Request):
 @router.get("/connect/linkedin")
 async def connect_linkedin_start(request: Request):
     """Redirect user to LinkedIn OAuth consent page."""
-    _user_id(request)
+    get_user_id(request)
     state = secrets.token_urlsafe(16)
     auth_url = build_linkedin_auth_url(state)
     return {"auth_url": auth_url, "state": state}
@@ -186,11 +174,9 @@ async def linkedin_callback(code: str, state: str, request: Request):
 @router.delete("/disconnect/{platform}")
 async def disconnect_account(platform: str, request: Request):
     """Remove connected account for a platform."""
-    user_id = _user_id(request)
-    s = get_settings()
-    if not s.supabase_url:
+    user_id = get_user_id(request)
+    sb = get_supabase_client()
+    if not sb:
         raise HTTPException(status_code=503, detail="DB not configured")
-    from supabase import create_client
-    sb = create_client(s.supabase_url, s.supabase_service_role_key)
     sb.table("connected_accounts").delete().eq("user_id", user_id).eq("platform", platform).execute()
     return {"platform": platform, "disconnected": True, "success": True}

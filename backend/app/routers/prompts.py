@@ -12,16 +12,11 @@ from fastapi import APIRouter, Request, HTTPException, Query
 
 from app.models.marketplace import WeeklyPrompt, AnswerPromptRequest
 from app.services import prompt_service
+from app.shared.deps import get_user_id
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/prompts", tags=["prompts"])
-
-
-def _user_id(request: Request) -> str:
-    uid = getattr(request.state, "user_id", None)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return uid
 
 
 @router.get("/weekly", response_model=WeeklyPrompt)
@@ -30,7 +25,7 @@ async def get_weekly_prompt(request: Request):
     Return the current unanswered weekly prompt for this user.
     Creates a new one if none exists.
     """
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     prompt = await prompt_service.get_current_prompt(user_id)
     if not prompt:
         raise HTTPException(status_code=404, detail="No prompt found")
@@ -44,7 +39,7 @@ async def answer_prompt(prompt_id: str, req: AnswerPromptRequest, request: Reque
     If generate_campaign=True, the answer becomes the campaign brief
     and drafts are generated immediately.
     """
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     await prompt_service.answer_prompt(user_id, prompt_id, req.answer_text)
 
     if not req.generate_campaign:
@@ -64,12 +59,10 @@ async def answer_prompt(prompt_id: str, req: AnswerPromptRequest, request: Reque
         return {"prompt_id": prompt_id, "success": True, "note": "Campaign generation available in Phase 3"}
 
     # Save campaign
-    from app.config import get_settings
-    from supabase import create_client
-    s = get_settings()
+    s = get_supabase_client()
     campaign_id = None
-    if s.supabase_url:
-        sb = create_client(s.supabase_url, s.supabase_service_role_key)
+    if s:
+        sb = s
         camp_r = sb.table("campaigns").insert({
             "user_id": user_id,
             "brief_what_changed": req.answer_text,
@@ -97,6 +90,6 @@ async def get_prompt_history(
     limit: int = Query(default=10, ge=1, le=50),
 ):
     """Return list of past answered prompts for this user."""
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     history = await prompt_service.get_prompt_history(user_id, limit)
     return {"prompts": history}

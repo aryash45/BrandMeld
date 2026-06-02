@@ -18,16 +18,10 @@ from app.models.analytics import (
     PlatformStats,
     EngagementDataPoint,
 )
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
-
-def _get_supabase():
-    from supabase import create_client
-    s = get_settings()
-    if not s.supabase_url:
-        return None
-    return create_client(s.supabase_url, s.supabase_service_role_key)
 
 
 async def get_analytics_summary(
@@ -40,7 +34,7 @@ async def get_analytics_summary(
     Build the full analytics summary for the dashboard.
     Falls back to empty response if Supabase is not configured.
     """
-    sb = _get_supabase()
+    sb = get_supabase_client()
     if not sb:
         return _empty_summary()
 

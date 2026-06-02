@@ -40,77 +40,21 @@ from google.genai import types as genai_types
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field
 
+# Use shared Gemini infrastructure instead of duplicating it
+from app.core.gemini import (
+    get_gemini_client as _get_client,
+    get_model_id as _get_model_id,
+    is_retryable_gemini_error as _is_retryable_gemini_error,
+    generate_content_with_retry as _generate_content_with_retry,
+    DEFAULT_MODEL_ID,
+    GEMINI_RETRY_DELAYS,
+)
+from app.shared.db import get_supabase_client as _get_supabase
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-DEFAULT_MODEL_ID = "gemini-2.5-flash"
-GEMINI_RETRY_DELAYS = (1.0, 2.0, 4.0)
 DEFAULT_PLATFORMS = ["twitter", "linkedin", "newsletter"]
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _get_api_key() -> str:
-    key = os.getenv("GEMINI_API_KEY")
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY environment variable not set")
-    return key
-
-
-def _get_model_id() -> str:
-    return os.getenv("GEMINI_MODEL_ID", DEFAULT_MODEL_ID)
-
-
-def _get_client() -> genai.Client:
-    """Return a configured google-genai Client (new SDK)."""
-    return genai.Client(api_key=_get_api_key())
-
-
-def _is_retryable_gemini_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return (
-        "503 unavailable" in message
-        or "'status': 'unavailable'" in message
-        or '"status": "unavailable"' in message
-        or "currently experiencing high demand" in message
-    )
-
-
-async def _generate_content_with_retry(
-    *,
-    client: genai.Client,
-    contents,
-    config: genai_types.GenerateContentConfig,
-) -> genai_types.GenerateContentResponse:
-    model_id = _get_model_id()
-    last_exc: Exception | None = None
-
-    for attempt, delay in enumerate((0.0, *GEMINI_RETRY_DELAYS), start=1):
-        if delay:
-            await asyncio.sleep(delay)
-        try:
-            return await asyncio.to_thread(
-                lambda: client.models.generate_content(
-                    model=model_id,
-                    contents=contents,
-                    config=config,
-                )
-            )
-        except Exception as exc:
-            last_exc = exc
-            if not _is_retryable_gemini_error(exc) or attempt > len(GEMINI_RETRY_DELAYS):
-                raise
-            logger.warning(
-                "Gemini generate_content temporary failure on attempt %s/%s for model %s: %s",
-                attempt,
-                len(GEMINI_RETRY_DELAYS) + 1,
-                model_id,
-                exc,
-            )
-
-    if last_exc is not None:
-        raise last_exc
-    raise RuntimeError("Gemini request failed before any attempt was made")
 
 
 # ─── Brand DNA ────────────────────────────────────────────────────────────────
@@ -454,22 +398,7 @@ async def _plan_campaign(
     return response.parsed
 
 
-# ─── Supabase helper (optional — graceful if not configured) ──────────────────
-
-
-def _get_supabase():
-    """Returns a Supabase client or None if env vars are missing."""
-    try:
-        from supabase import create_client  # type: ignore
-
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        if url and key:
-            return create_client(url, key)
-    except Exception:
-        pass
-    return None
-
+# (Supabase helper imported from app.shared.db as _get_supabase)
 
 # ─── Request / Response models ────────────────────────────────────────────────
 

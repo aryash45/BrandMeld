@@ -20,6 +20,8 @@ from pydantic import BaseModel
 
 from app.models.marketplace import UserPreferences
 from app.services import prompt_service
+from app.shared.deps import get_user_id
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -27,24 +29,17 @@ logger = logging.getLogger(__name__)
 settings_router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-def _user_id(request: Request) -> str:
-    uid = getattr(request.state, "user_id", None)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return uid
-
-
 @settings_router.get("/preferences", response_model=UserPreferences)
 async def get_preferences(request: Request):
     """Fetch user notification and prompt preferences."""
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     return await prompt_service.get_user_preferences(user_id)
 
 
 @settings_router.put("/preferences", response_model=UserPreferences)
 async def update_preferences(req: UserPreferences, request: Request):
     """Update user preferences. All fields optional (PATCH semantics)."""
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     await prompt_service.save_user_preferences(user_id, req)
     return req
 
@@ -60,7 +55,7 @@ async def upgrade_billing(req: UpgradeRequest, request: Request):
     Phase 3: Initiate Stripe checkout session.
     Currently returns a stub until Stripe is integrated.
     """
-    _user_id(request)
+    get_user_id(request)
     return {
         "success": False,
         "message": "Billing integration coming in Phase 3",
@@ -80,14 +75,10 @@ class OnboardingCompleteRequest(BaseModel):
 @onboarding_router.get("/status")
 async def get_onboarding_status(request: Request):
     """Check if authenticated user has completed onboarding."""
-    user_id = _user_id(request)
-    from app.config import get_settings
-    from supabase import create_client
-    s = get_settings()
-    if not s.supabase_url:
+    user_id = get_user_id(request)
+    sb = get_supabase_client()
+    if not sb:
         return {"completed": False, "step": 1}
-
-    sb = create_client(s.supabase_url, s.supabase_service_role_key)
     try:
         # Onboarding is complete if brand_dna exists
         r = sb.table("brand_dna").select("id").eq("user_id", user_id).maybe_single().execute()
@@ -111,7 +102,7 @@ async def get_onboarding_status(request: Request):
 @onboarding_router.post("/complete")
 async def complete_onboarding(req: OnboardingCompleteRequest, request: Request):
     """Mark onboarding as completed by ensuring default preferences exist."""
-    user_id = _user_id(request)
+    user_id = get_user_id(request)
     prefs = await prompt_service.get_user_preferences(user_id)
     await prompt_service.save_user_preferences(user_id, prefs)
     return {"completed": True, "steps_done": req.completed_steps}
@@ -134,7 +125,7 @@ async def score_draft(req: ScoreRequest, request: Request):
     Returns 4-dimension breakdown + overall score + improvement hints.
     Target latency: <2 seconds.
     """
-    _user_id(request)
+    get_user_id(request)
     from app.services.voice_service import score_draft as _score
     result = await _score(req.draft, req.voice_personality)
     return result

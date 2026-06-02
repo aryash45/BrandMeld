@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.integrations.linkedin_client import LinkedInClient
 from app.integrations.twitter_client import build_tweet_intent_url, split_into_thread
 from app.models.post import PublishRequest, PublishResponse
+from app.shared.db import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +64,9 @@ def decrypt_token(cipher: str) -> str:
 
 async def _get_connected_account(user_id: str, platform: str) -> Optional[dict]:
     """Fetch and decrypt connected account for a user+platform."""
-    from supabase import create_client, Client
-    settings = get_settings()
-    if not settings.supabase_url:
+    sb = get_supabase_client()
+    if not sb:
         return None
-    sb: Client = create_client(settings.supabase_url, settings.supabase_service_role_key)
     result = (
         sb.table("connected_accounts")
         .select("*")
