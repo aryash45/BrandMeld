@@ -55,7 +55,7 @@ const VoiceMarketplace: React.FC = () => {
         body: JSON.stringify({}),
       });
       if (res.ok) {
-        navigate('/dashboard/create');
+        navigate('/plan');
       }
     } finally {
       setForking(null);

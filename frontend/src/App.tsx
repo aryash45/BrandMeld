@@ -1,18 +1,20 @@
 /**
- * App.tsx — BrandMeld AI Growth OS Router
+ * App.tsx — BrandMeld Navigation
  *
- * Route structure:
+ * 5-section outcome-first navigation (IA_REDESIGN.md):
+ *
  *  /                  → LandingPage (public)
  *  /onboarding        → OnboardingWizard (protected, no AppLayout)
- *  /dashboard         → AI Command Center
- *  /content           → Content Studio
- *  /campaigns         → Campaign Manager
- *  /seo               → SEO Intelligence
- *  /analytics         → Analytics Dashboard
- *  /competitors       → Competitor Radar
- *  /ai-studio         → AI Studio
- *  /automations       → Automations
- *  /settings          → Settings
+ *
+ *  /discover          → DiscoverPage   — "What should I talk about?"
+ *  /plan              → DashboardPage  — "Plan your angle, approve, generate"
+ *  /create            → Content        — "Write and edit drafts"
+ *  /publish           → PublishPage    — "Send it now or schedule"
+ *  /learn             → LearnPage      — "What worked?"
+ *  /settings          → SettingsPageNew — Brand / Connections / Marketplace / Account
+ *
+ * Legacy redirects kept for deep links that may still exist in the wild.
+ * Dead stubs (/campaigns, /seo, /competitors, /ai-studio, /automations) removed.
  */
 import React, { Suspense, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
@@ -22,17 +24,14 @@ import ProtectedRoute from './layout/ProtectedRoute';
 import AuthModal from './components/AuthModal';
 import LandingPage from './pages/LandingPage';
 
-// Lazy pages
-const Dashboard        = React.lazy(() => import('./pages/Dashboard'));
-const Content          = React.lazy(() => import('./pages/Content'));
-const Analytics        = React.lazy(() => import('./pages/Analytics'));
+// Lazy pages — core 5 sections
+const DiscoverPage     = React.lazy(() => import('./pages/DiscoverPage'));
+const DashboardPage    = React.lazy(() => import('./pages/DashboardPage'));   // /plan
+const Content          = React.lazy(() => import('./pages/Content'));         // /create
+const PublishPage      = React.lazy(() => import('./pages/PublishPage'));
+const LearnPage        = React.lazy(() => import('./pages/LearnPage'));
+const SettingsPageNew  = React.lazy(() => import('./pages/SettingsPageNew'));
 const OnboardingWizard = React.lazy(() => import('./pages/onboarding/OnboardingWizard'));
-const SEOPage          = React.lazy(() => import('./pages/StubPages').then(m => ({ default: m.SEOPage })));
-const CompetitorsPage  = React.lazy(() => import('./pages/StubPages').then(m => ({ default: m.CompetitorsPage })));
-const AIStudioPage     = React.lazy(() => import('./pages/StubPages').then(m => ({ default: m.AIStudioPage })));
-const AutomationsPage  = React.lazy(() => import('./pages/StubPages').then(m => ({ default: m.AutomationsPage })));
-const CampaignsPage    = React.lazy(() => import('./pages/StubPages').then(m => ({ default: m.CampaignsPage })));
-const SettingsPage     = React.lazy(() => import('./pages/SettingsPage'));
 
 const PageLoader: React.FC = () => (
   <div style={{
@@ -65,26 +64,38 @@ const App: React.FC = () => {
               <Route path="/onboarding" element={<OnboardingWizard />} />
             </Route>
 
-            {/* Protected app shell */}
+            {/* Protected app shell — 5 real sections */}
             <Route element={<ProtectedRoute />}>
               <Route element={<AppLayout />}>
-                <Route path="/dashboard"   element={<Dashboard />} />
-                <Route path="/content"     element={<Content />} />
-                <Route path="/campaigns"   element={<CampaignsPage />} />
-                <Route path="/seo"         element={<SEOPage />} />
-                <Route path="/analytics"   element={<Analytics />} />
-                <Route path="/competitors" element={<CompetitorsPage />} />
-                <Route path="/ai-studio"   element={<AIStudioPage />} />
-                <Route path="/automations" element={<AutomationsPage />} />
-                <Route path="/settings"    element={<SettingsPage />} />
+                <Route path="/discover"  element={<DiscoverPage />} />
+                <Route path="/plan"      element={<DashboardPage />} />
+                <Route path="/create"    element={<Content />} />
+                <Route path="/publish"   element={<PublishPage />} />
+                <Route path="/learn"     element={<LearnPage />} />
+                <Route path="/settings"  element={<SettingsPageNew />} />
 
-                {/* Legacy redirects */}
-                <Route path="/dashboard/home"   element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard/create" element={<Navigate to="/content" replace />} />
-                <Route path="/dashboard/*"      element={<Navigate to="/dashboard" replace />} />
-                <Route path="/history"          element={<Navigate to="/dashboard" replace />} />
-                <Route path="/create"           element={<Navigate to="/content" replace />} />
-                <Route path="/marketplace/*"    element={<Navigate to="/ai-studio" replace />} />
+                {/* ── Legacy redirects (keep old URLs working) ── */}
+                {/* Old home → Discover */}
+                <Route path="/dashboard"        element={<Navigate to="/discover" replace />} />
+                <Route path="/dashboard/home"   element={<Navigate to="/discover" replace />} />
+                <Route path="/dashboard/*"      element={<Navigate to="/discover" replace />} />
+
+                {/* Old content → Create */}
+                <Route path="/content"          element={<Navigate to="/create" replace />} />
+                <Route path="/dashboard/create" element={<Navigate to="/plan"   replace />} />
+                <Route path="/create/*"         element={<Navigate to="/create" replace />} />
+
+                {/* Old analytics → Learn */}
+                <Route path="/analytics"        element={<Navigate to="/learn"  replace />} />
+
+                {/* Dead stubs → nearest live equivalent */}
+                <Route path="/campaigns"        element={<Navigate to="/plan"    replace />} />
+                <Route path="/seo"              element={<Navigate to="/learn?tab=keywords" replace />} />
+                <Route path="/competitors"      element={<Navigate to="/learn?tab=audience" replace />} />
+                <Route path="/ai-studio"        element={<Navigate to="/plan"    replace />} />
+                <Route path="/automations"      element={<Navigate to="/publish" replace />} />
+                <Route path="/marketplace/*"    element={<Navigate to="/settings?tab=marketplace" replace />} />
+                <Route path="/history"          element={<Navigate to="/publish" replace />} />
               </Route>
             </Route>
 
