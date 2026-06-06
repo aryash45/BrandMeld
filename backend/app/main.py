@@ -8,6 +8,17 @@ Security
 Every route under /v1/* is protected by JWT middleware that validates
 the Authorization: Bearer <token> header against the Supabase JWT secret.
 Public routes: /health, /docs, /openapi.json, /redoc, /v1/auth/linkedin/callback
+
+OWASP fixes applied
+-------------------
+P0-1  Auth middleware hard-fails in production when env vars missing
+P0-4  /v1/discovery requires auth
+P1-2  JWT sub extracted from verified Supabase response object (not re-decoded)
+P1-3  Missing sub → 401 (not "unknown")
+P1-7  Rate limiting via slowapi
+P2-1  Content-Security-Policy header added
+P2-2  CORS restricted to specific methods and headers
+P2-7  Anon key used for auth client (not service role key)
 """
 
 from dotenv import load_dotenv
@@ -22,6 +33,10 @@ import jwt as pyjwt
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
 from app.services.engine import router as engine_router
 
 # ── V2 routers ─────────────────────────────────────────────────────────────
@@ -30,8 +45,12 @@ from app.routers.analytics import router as analytics_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.prompts import router as prompts_router
 from app.routers.settings import settings_router, onboarding_router, score_router
+from app.shared.deps import get_user_id
 
 logger = logging.getLogger(__name__)
+
+# ── Rate limiter (P1-7) ───────────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
 
 # ── JWT config ────────────────────────────────────────────────────────────────
 # Routes that don't require a valid JWT
@@ -53,7 +72,11 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+# Attach rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── CORS (P2-2: restrict methods and headers) ─────────────────────────────────
 _raw_origins = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
@@ -69,11 +92,14 @@ def _get_supabase_project_url() -> str:
     return os.getenv("SUPABASE_URL", "").strip()
 
 
+# P2-7: Use anon key for auth client — not service role key
 def _get_supabase_auth_key() -> str:
-    return (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-        or os.getenv("SUPABASE_ANON_KEY", "").strip()
-    )
+    """
+    Returns the anon key for auth token validation.
+    The anon key is sufficient for auth.get_user() — service role key
+    is not required here and would be over-privileged.
+    """
+    return os.getenv("SUPABASE_ANON_KEY", "").strip()
 
 
 @lru_cache(maxsize=8)
@@ -90,16 +116,25 @@ def _get_supabase_auth_client():
     return _build_supabase_auth_client(url, key)
 
 
-async def _verify_supabase_token(token: str) -> bool:
+async def _verify_supabase_token(token: str) -> tuple[bool, str | None]:
+    """
+    Verify token via Supabase auth API.
+    Returns (is_valid, user_id).
+    P1-2 fix: returns user_id from the verified response object directly
+    instead of re-decoding the JWT without signature verification.
+    """
     auth_client = _get_supabase_auth_client()
     if auth_client is None:
-        return False
+        return False, None
     try:
         user_response = await asyncio.to_thread(auth_client.get_user, token)
+        user = getattr(user_response, "user", None)
+        if user and getattr(user, "id", None):
+            return True, str(user.id)
+        return False, None
     except Exception as exc:
         logger.warning("Supabase token verification failed: %s", exc)
-        return False
-    return bool(getattr(user_response, "user", None))
+        return False, None
 
 
 def _build_cors_headers(request: Request) -> dict[str, str]:
@@ -111,16 +146,18 @@ def _build_cors_headers(request: Request) -> dict[str, str]:
         }
     return {}
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # P2-2: Restrict to only required methods and headers
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 
-# ── Security headers middleware ────────────────────────────────────────────────
+# ── Security headers middleware (P2-1: CSP added) ────────────────────────────
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -128,6 +165,12 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    # P2-1: Content-Security-Policy
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; connect-src 'self' https://*.supabase.co; "
+        "script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    )
     if request.url.path not in _PUBLIC_PATHS:
         response.headers.setdefault("Cache-Control", "no-store")
     return response
@@ -139,6 +182,11 @@ async def jwt_auth_middleware(request: Request, call_next):
     """
     Validate Authorization: Bearer <token> for all non-public routes.
     Attaches user_id to request.state for downstream use.
+
+    OWASP fixes:
+    - P0-1: Hard-fail in production when no verifier is configured
+    - P1-2: user_id extracted from verified Supabase response, not re-decoded JWT
+    - P1-3: Missing sub → 401 (never falls through as "unknown")
     """
     if request.url.path in _PUBLIC_PATHS or request.method == "OPTIONS":
         return await call_next(request)
@@ -146,8 +194,20 @@ async def jwt_auth_middleware(request: Request, call_next):
     jwt_secret = _get_supabase_jwt_secret()
     auth_client = _get_supabase_auth_client()
 
-    # Dev mode: no verifier configured → let requests through
+    # P0-1: If neither verifier is configured, hard-fail in production
     if not jwt_secret and auth_client is None:
+        from app.config import get_settings
+        settings = get_settings()
+        if settings.is_production:
+            logger.critical(
+                "SUPABASE_JWT_SECRET and SUPABASE_ANON_KEY are not configured in production. "
+                "All requests are being rejected to prevent unauthorized access."
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Service is not properly configured. Contact support."},
+            )
+        # Dev-only fallback — never reaches production
         logger.warning(
             "No Supabase token verifier configured — auth middleware is DISABLED. "
             "Set SUPABASE_JWT_SECRET for production."
@@ -182,10 +242,18 @@ async def jwt_auth_middleware(request: Request, call_next):
                 options={"verify_aud": False},
             )
             user_id = payload.get("sub")
-        elif auth_client is not None and await _verify_supabase_token(token):
-            # Decode without verification just to extract sub
-            payload = pyjwt.decode(token, options={"verify_signature": False})
-            user_id = payload.get("sub")
+        elif auth_client is not None:
+            # P1-2: Extract user_id from verified Supabase response object
+            # NOT from a second unverified decode
+            is_valid, verified_user_id = await _verify_supabase_token(token)
+            if is_valid:
+                user_id = verified_user_id
+            else:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid authentication token."},
+                    headers=cors_headers,
+                )
         else:
             return JSONResponse(
                 status_code=401,
@@ -197,8 +265,16 @@ async def jwt_auth_middleware(request: Request, call_next):
     except pyjwt.InvalidTokenError:
         return JSONResponse(status_code=401, content={"detail": "Invalid authentication token."}, headers=cors_headers)
 
+    # P1-3: Reject tokens with missing sub — never fall through as "unknown"
+    if not user_id:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Token is missing required subject claim."},
+            headers=cors_headers,
+        )
+
     # Attach user_id to request.state — used by all V2 routers
-    request.state.user_id = user_id or "unknown"
+    request.state.user_id = user_id
     return await call_next(request)
 
 
@@ -224,6 +300,7 @@ async def health():
 
 
 # ── /v1/discovery shim — keeps useBrandKit + fetchBrandDNA working ────────────
+# P0-4: Now requires authentication
 from fastapi import HTTPException as _HTTPException  # noqa: E402
 from app.services.engine import _extract_brand_dna, BrandDNA as _BrandDNA  # noqa: E402
 
@@ -242,23 +319,30 @@ def _get_supabase_for_discovery():
 
 
 @app.post("/v1/discovery", tags=["discovery (deprecated)"])
-async def discover(url: str):
-    """Legacy discovery shim — delegates to engine._extract_brand_dna."""
+@limiter.limit("5/minute")
+async def discover(request: Request, url: str):
+    """
+    Legacy discovery shim — delegates to engine._extract_brand_dna.
+    P0-4: Requires authentication (user_id extracted from JWT).
+    """
+    user_id = get_user_id(request)  # P0-4: enforces auth
     try:
         dna: _BrandDNA = await _extract_brand_dna(url)
         dna_data = {**dna.model_dump(), "url": url}
     except ValueError as exc:
         raise _HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise _HTTPException(status_code=500, detail=f"Brand discovery failed: {exc}") from exc
+    except Exception:
+        # P1-6: Do not expose raw exception details
+        logger.error("Brand discovery failed for user %s", user_id, exc_info=True)
+        raise _HTTPException(status_code=500, detail="Brand discovery failed. Please try again.")
 
     try:
-        db = _SupabaseService()
-        saved = await db.save_brand_dna(dna_data)
-        if isinstance(saved, list) and saved:
-            return {"status": "success", "data": saved[0]}
-        if saved:
-            return {"status": "success", "data": saved}
+        db = _get_supabase_for_discovery()
+        if db:
+            row = {**dna_data, "user_id": user_id}
+            saved = db.table("brand_dna").upsert(row, on_conflict="url").execute()
+            if saved.data:
+                return {"status": "success", "data": saved.data[0]}
     except Exception:
         pass  # Supabase optional — fall through
 

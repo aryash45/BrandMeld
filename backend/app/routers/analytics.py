@@ -3,6 +3,12 @@ routers/analytics.py — Engagement analytics endpoints.
 
 GET /v1/analytics            — Full summary (top posts, breakdown, insights)
 GET /v1/analytics/post/:id   — Single post engagement detail
+
+OWASP fix applied
+-----------------
+P2-5: platform query parameter now validated against an explicit allowlist
+      via a regex pattern. Prevents unexpected values from being passed
+      directly into Supabase filter expressions.
 """
 from __future__ import annotations
 import logging
@@ -25,7 +31,12 @@ async def get_analytics(
     request: Request,
     from_date: Optional[datetime] = Query(default=None, description="ISO datetime, default: 30 days ago"),
     to_date: Optional[datetime] = Query(default=None, description="ISO datetime, default: now"),
-    platform: Optional[str] = Query(default=None, description="Filter by platform"),
+    # P2-5: Restrict platform to known valid values via regex allowlist
+    platform: Optional[str] = Query(
+        default=None,
+        description="Filter by platform",
+        pattern=r"^(twitter|linkedin|instagram|newsletter)$",
+    ),
 ):
     """
     Return engagement summary, top posts, platform breakdown, and insights

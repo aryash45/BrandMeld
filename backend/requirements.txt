@@ -26,5 +26,8 @@ cryptography>=42.0.0
 # Background scheduler — weekly prompts (dev); Cloud Scheduler handles prod
 APScheduler>=3.10.4
 
+# Rate limiting
+slowapi>=0.1.9
+
 # Utilities
 python-dotenv==1.0.1

@@ -8,6 +8,13 @@ Phase 1 support:
 
 All tokens are retrieved from Supabase connected_accounts table.
 Tokens are stored encrypted (Fernet) and decrypted here at runtime.
+
+OWASP fix applied
+-----------------
+P1-4: encrypt_token now raises RuntimeError instead of silently storing
+      OAuth tokens in plaintext when ENCRYPTION_KEY is not configured.
+      A misconfigured encryption key must be an explicit startup error,
+      not a silent security regression.
 """
 from __future__ import annotations
 import logging
@@ -41,10 +48,19 @@ def _fernet():
 
 
 def encrypt_token(plain: str) -> str:
-    """Encrypt OAuth token before storing in DB. Returns plain if key unset."""
+    """
+    Encrypt OAuth token before storing in DB.
+    P1-4: Raises RuntimeError if ENCRYPTION_KEY is not configured.
+           Never silently stores tokens in plaintext.
+    """
     f = _fernet()
     if not f:
-        return plain
+        raise RuntimeError(
+            "ENCRYPTION_KEY is not configured. "
+            "OAuth tokens cannot be stored securely. "
+            "Generate a key with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+            "and set it as the ENCRYPTION_KEY environment variable."
+        )
     return f.encrypt(plain.encode()).decode()
 
 
@@ -93,11 +109,10 @@ async def _save_published_post(
     error_message: Optional[str] = None,
 ) -> Optional[str]:
     """Insert row into published_posts, return new row id."""
-    from supabase import create_client
-    settings = get_settings()
-    if not settings.supabase_url:
+    from app.shared.db import get_supabase_client
+    sb = get_supabase_client()
+    if not sb:
         return None
-    sb = create_client(settings.supabase_url, settings.supabase_service_role_key)
     row = {
         "user_id": user_id,
         "campaign_id": campaign_id,

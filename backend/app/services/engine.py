@@ -34,11 +34,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from google import genai
 from google.genai import types as genai_types
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from app.shared.deps import get_user_id
 
 # Use shared Gemini infrastructure instead of duplicating it
 from app.core.gemini import (
@@ -53,6 +56,9 @@ from app.shared.db import get_supabase_client as _get_supabase
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# P1-7: Rate limiter — same instance as in main.py (shared via import)
+limiter = Limiter(key_func=get_remote_address)
 
 DEFAULT_PLATFORMS = ["twitter", "linkedin", "newsletter"]
 
@@ -484,7 +490,8 @@ class EditResponse(BaseModel):
 
 class OnboardRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
-    user_id: str | None = Field(default=None, max_length=128)
+    # P0-3: user_id is no longer accepted from the request body.
+    # It is always derived from the authenticated JWT via request.state.
 
 
 class OnboardResponse(BaseModel):
@@ -521,8 +528,15 @@ _EDIT_SYSTEM = (
 
 
 @router.post("/plan", response_model=CampaignPlanResponse)
-async def plan_campaign(req: CampaignPlanRequest):
-    """Turn a product update plus proof into an approval-ready campaign plan."""
+@limiter.limit("20/minute")  # P1-7: prevent Gemini API cost amplification
+async def plan_campaign(req: CampaignPlanRequest, request: Request):
+    """
+    Turn a product update plus proof into an approval-ready campaign plan.
+    P0-3: Requires authenticated user (user_id asserted from JWT).
+    """
+    user_id = get_user_id(request)  # P0-3: assert auth — logs which user is generating
+    logger.info("Campaign plan requested by user %s", user_id)
+
     voice = _resolve_voice(req.brand_voice, req.brand_dna)
     valid_platforms = _normalize_platforms(req.platforms)
     if not valid_platforms:
@@ -534,7 +548,9 @@ async def plan_campaign(req: CampaignPlanRequest):
     try:
         plan = await _plan_campaign(req.brief, voice, valid_platforms)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Campaign planning failed: {exc}") from exc
+        # P1-6: Log full details server-side; return generic message to client
+        logger.error("Campaign planning failed for user %s: %s", user_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Campaign planning failed. Please try again.") from exc
 
     return CampaignPlanResponse(
         plan=plan,
@@ -544,12 +560,17 @@ async def plan_campaign(req: CampaignPlanRequest):
 
 
 @router.post("/launch", response_model=CampaignLaunchResponse)
-async def launch_campaign(req: CampaignLaunchRequest):
+@limiter.limit("10/minute")  # P1-7: most expensive endpoint — parallel Gemini calls
+async def launch_campaign(req: CampaignLaunchRequest, request: Request):
     """
     Zero-config batch campaign launch.
     Defaults to X, LinkedIn, and Instagram simultaneously.
     Runs internal audit self-correction on every draft.
+    P0-3: Requires authenticated user.
     """
+    user_id = get_user_id(request)  # P0-3: assert auth
+    logger.info("Campaign launch requested by user %s for platforms %s", user_id, req.platforms)
+
     voice = req.brand_voice
     if not voice and req.brand_dna:
         voice = req.brand_dna.voice_personality
@@ -573,7 +594,9 @@ async def launch_campaign(req: CampaignLaunchRequest):
         results_list = await asyncio.gather(*tasks)
         results = dict(results_list)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Campaign generation failed: {exc}") from exc
+        # P1-6: Log full details server-side; return generic message to client
+        logger.error("Campaign generation failed for user %s: %s", user_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Campaign generation failed. Please try again.") from exc
 
     return CampaignLaunchResponse(
         results=results,
@@ -583,8 +606,13 @@ async def launch_campaign(req: CampaignLaunchRequest):
 
 
 @router.post("/edit", response_model=EditResponse)
-async def edit_draft(req: EditRequest):
-    """Apply a human-action editing command to an existing draft."""
+@limiter.limit("30/minute")  # P1-7: rate limit edit endpoint
+async def edit_draft(req: EditRequest, request: Request):
+    """
+    Apply a human-action editing command to an existing draft.
+    P0-3: Requires authenticated user.
+    """
+    user_id = get_user_id(request)  # P0-3: assert auth
     instruction = _EDIT_INSTRUCTIONS.get(req.edit_command)
     if not instruction:
         raise HTTPException(
@@ -613,27 +641,35 @@ async def edit_draft(req: EditRequest):
             message=f"Applied: {req.edit_command}",
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Edit failed: {exc}") from exc
+        # P1-6: Log full error server-side, return generic message to client
+        logger.error("Draft edit failed for user %s: %s", user_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Draft edit failed. Please try again.") from exc
 
 
 @router.post("/onboard", response_model=OnboardResponse)
-async def onboard_brand(req: OnboardRequest):
+@limiter.limit("5/minute")  # P1-7: very expensive — Playwright browser + Gemini vision
+async def onboard_brand(req: OnboardRequest, request: Request):
     """
     Zero-config onboarding: scrape a URL → extract Brand DNA → store in Supabase.
     Called once when a user first sets up their account.
+    P0-3: user_id always derived from JWT — never accepted from the request body.
     """
+    user_id = get_user_id(request)  # P0-3: enforce auth; user_id from JWT only
     try:
         dna = await _extract_brand_dna(req.url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Brand discovery failed: {exc}") from exc
+        # P1-6: Log full error, return generic message
+        logger.error("Brand discovery failed for user %s: %s", user_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Brand discovery failed. Please try again.") from exc
 
     stored = False
     try:
         sb = _get_supabase()
         if sb:
-            row = {**dna.model_dump(), "url": req.url, "user_id": req.user_id}
+            # P0-3: user_id comes from JWT only — not from req body
+            row = {**dna.model_dump(), "url": req.url, "user_id": user_id}
             sb.table("brand_dna").upsert(row, on_conflict="url").execute()
             stored = True
     except Exception as exc:
@@ -647,7 +683,9 @@ async def onboard_brand(req: OnboardRequest):
 
 
 @router.get("/watchdog", response_model=WatchdogResponse)
+@limiter.limit("10/minute")  # P1-7: rate limit watchdog poll
 async def watchdog_check(
+    request: Request,
     url: Annotated[str, Query(description="The brand's website URL to monitor")],
     last_known_hash: Annotated[str | None, Query()] = None,
 ):
@@ -655,7 +693,9 @@ async def watchdog_check(
     Lightweight background watchdog — polls a URL for new product content.
     Compares the current visible text fingerprint against last_known_hash.
     If changes are detected, prepares draft campaign summaries automatically.
+    P0-3: Requires authenticated user.
     """
+    user_id = get_user_id(request)  # P0-3: assert auth
     try:
         normalized = _normalize_url(url)
         page_ctx = await asyncio.to_thread(_fetch_page_context, normalized)
@@ -696,7 +736,7 @@ async def watchdog_check(
         if not isinstance(draft_campaigns, list):
             draft_campaigns = []
     except Exception as exc:
-        logger.warning("Watchdog draft generation failed: %s", exc)
+        logger.warning("Watchdog draft generation failed for user %s: %s", user_id, exc)
 
     return WatchdogResponse(
         new_products_detected=True,

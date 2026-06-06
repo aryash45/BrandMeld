@@ -1,8 +1,15 @@
 """
 shared/db.py — Unified Supabase client factory.
 
-Replaces the 5+ duplicate `_get_sb()` / `_get_supabase()` helpers that
-previously lived in each service/router file.
+OWASP fix applied
+-----------------
+P2-4: Removed the anon key fallback. The backend always operates with the
+      service role key so it can bypass Row Level Security (RLS) for
+      server-side queries. The anon key is intended for client-side use only.
+
+      Previously, if SUPABASE_SERVICE_ROLE_KEY was unset, the backend would
+      silently use the anon key — which is subject to RLS and would produce
+      unpredictable/inconsistent data access behavior.
 
 Usage
 -----
@@ -17,24 +24,20 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 def get_supabase_client():
     """
-    Return a Supabase client or None if env vars are missing.
+    Return a Supabase client (with service role key) or None if env vars are missing.
 
-    Prefers SUPABASE_SERVICE_ROLE_KEY; falls back to SUPABASE_ANON_KEY.
-    Returns None (instead of raising) so callers can handle the
-    "database not available in dev mode" case gracefully.
+    P2-4: Only uses SUPABASE_SERVICE_ROLE_KEY — no anon key fallback.
+    Returns None (instead of raising) so callers can gracefully handle
+    the "database not available in dev mode" case.
     """
     url = os.getenv("SUPABASE_URL", "").strip()
-    key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-        or os.getenv("SUPABASE_ANON_KEY", "").strip()
-    )
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
     if not url or not key:
         logger.debug("Supabase env vars not set — returning None client")
