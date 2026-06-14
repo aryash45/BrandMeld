@@ -22,11 +22,11 @@ interface SidebarProps {
 }
 
 const NAV = [
-  { to: '/discover', label: 'Discover', icon: '🔭', desc: 'What to talk about' },
-  { to: '/plan',     label: 'Plan',     icon: '📐', desc: 'Angle & campaign' },
-  { to: '/create',   label: 'Create',   icon: '✦',  desc: 'Write & edit drafts' },
-  { to: '/publish',  label: 'Publish',  icon: '📤', desc: 'Send or schedule' },
-  { to: '/learn',    label: 'Learn',    icon: '📊', desc: 'What worked' },
+  { to: '/discover', label: 'Signal',     icon: '⚡', desc: 'What to distribute this week' },
+  { to: '/plan',     label: 'Draft',      icon: '✦',  desc: 'Generate your distribution' },
+  { to: '/create',   label: 'Refine',     icon: '✏',  desc: 'Edit and perfect your drafts' },
+  { to: '/publish',  label: 'Distribute', icon: '📡', desc: 'Push to all channels' },
+  { to: '/learn',    label: 'Measure',    icon: '📊', desc: 'What reached people' },
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
@@ -90,7 +90,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         {/* New Campaign CTA */}
         <div style={{ padding: '12px 12px 8px' }}>
           <button
-            onClick={() => { navigate('/plan'); onClose(); }}
+            onClick={() => { navigate('/discover'); onClose(); }}
             style={{
               width: '100%',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -105,15 +105,15 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             onMouseEnter={e => (e.currentTarget.style.opacity = '0.88')}
             onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
           >
-            <span style={{ fontSize: 15 }}>+</span>
-            New Campaign
+            <span style={{ fontSize: 15 }}>⚡</span>
+            New Distribution
           </button>
         </div>
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '4px 10px 8px' }}>
           <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '8px 10px 4px' }}>
-            Workflow
+            Distribution Engine
           </div>
           {NAV.map(item => (
             <NavLink

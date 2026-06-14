@@ -2,9 +2,11 @@
   <img src="./assets/Logo.png" alt="BrandMeld Logo" width="400" />
 </div>
 
-# BrandMeld — Autonomous AI Growth OS
+# BrandMeld — The Distribution Engine for Founders
 
-BrandMeld has evolved from a traditional SaaS tool into a category-defining, **autonomous AI growth operating system**. Built for founders and creators, it transforms how you approach personal branding by acting as your dedicated growth engine — featuring a premium dark-mode interface, an outcome-first workflow layout, and unified AI intelligence.
+> **"Distribution is the #1 startup killer. Better product loses to better distribution, every single time."**
+
+BrandMeld is not an AI writing tool — it's a **systematic distribution engine** for founders and product owners. Every week, it turns your raw product updates, milestones, and insights into a coordinated multi-channel distribution event — LinkedIn, X, and newsletter — in your authentic brand voice. Founders who distribute consistently win. BrandMeld is the system.
 
 <div align="center">
   <img src="./assets/Dashboard.png" alt="BrandMeld Dashboard" width="800" />
@@ -12,163 +14,224 @@ BrandMeld has evolved from a traditional SaaS tool into a category-defining, **a
 
 ---
 
-## 🚀 The AI Growth Engine
+## 🔁 The Distribution Flywheel
 
-### 1. Outcome-First Workflow Navigation
-No more navigation clutter or dead stubs. BrandMeld features a streamlined, 5-step lifecycle designed to move you from raw inspiration to published posts in minutes:
-* **Discover**: Gather weekly performance briefs, prompt insights, and AI recommendations.
-* **Plan**: Create, configure, and approve campaign ideas using your unique Brand DNA.
-* **Create**: Fine-tune generated platform drafts inside a unified editor with version history.
-* **Publish**: Schedule campaigns, dispatch live to social networks, and monitor post queues.
-* **Learn**: Access structured performance telemetry, SEO keywords, and competitor insights.
+```
+Signal → Draft → Refine → Distribute → Measure
+  ↑                                         │
+  └─────────────── (weekly loop) ───────────┘
+```
 
-### 2. Premium "Dark Mode" Design
-A high-end, sophisticated user interface designed for maximum focus and low friction. The customized design system ensures that everything from your analytics dashboard to your content editor feels responsive, premium, and distraction-free.
-
-### 3. AI-Native Content Creation
-Generate platform-specific content (LinkedIn posts, Twitter threads, newsletters) instantly. The engine runs your ideas through an internal auditing gate to ensure strict adherence to your unique "Brand DNA" — without the marketing busywork.
-
-### 4. Shared Infrastructure & Performance
-Our modularized backend architecture ensures fast page loads, clean separation of concerns, and reliable connection handling to external APIs (Google Gemini, Supabase, and LinkedIn).
+| Step | Section | Route | What it does |
+|---|---|---|---|
+| ⚡ | **Signal** | `/discover` | Pick what happened this week worth distributing |
+| ✦ | **Draft** | `/plan` | AI generates your distribution — streams word-by-word |
+| ✏ | **Refine** | `/create` | Edit, tone-adjust, perfect before sending |
+| 📡 | **Distribute** | `/publish` | One click → LinkedIn + X + Newsletter simultaneously |
+| 📊 | **Measure** | `/learn` | What reached people? Analytics feed back into next week |
 
 ---
 
-## 🏗️ Architecture & Core Modules
+## 🚀 What's New (Distribution Engine v2)
 
-The application is decoupled into a modern React frontend and a structured, modular FastAPI backend.
+### ⚡ Real-Time Streaming Generation
+Content now types out word-by-word as it's generated, like ChatGPT. Signal metadata (hook, audience, tone) appears the moment extraction completes, so you're never staring at a blank screen. Powered by NVIDIA NIM SSE streaming with graceful non-streaming fallback.
+
+### 📡 One-Click Multi-Channel Distribution
+After your post is generated, click **"⚡ Distribute Now"** to fire a modal showing all your connected channels (LinkedIn, X, Newsletter, Instagram coming soon). Check the channels you want, click once — BrandMeld pushes to all of them simultaneously with live per-channel status feedback.
+
+### 📊 Distribution Stats Strip
+The Signal page now shows your weekly distribution dashboard at a glance: posts this week, current streak, total distributed, and which channels you've used. Keeps you accountable and coming back weekly.
+
+### 🔐 Security Fixes (P0)
+- **BUG-2 fixed**: `user_id` removed from all request bodies — always derived server-side from JWT
+- **BUG-3 fixed**: Brand voice override now persists to Supabase, not `localStorage` (was lost on every page reload)
+- **Router fixed**: `/settings` now correctly routes to the full Settings Hub with all 4 tabs active
+
+### 🎨 Settings Hub — 4 Live Tabs
+| Tab | What's inside |
+|---|---|
+| **Brand DNA** | URL scanner + editable voice override → saved to Supabase |
+| **Connected Channels** | LinkedIn OAuth (live), X (web intent), Instagram (coming soon) |
+| **Voice Marketplace** | Fork a top founder's voice profile |
+| **Account** | Profile, plan, sign out |
+
+---
+
+## 🏗️ Architecture
 
 ```
 BrandMeld-CloudRunHackathon/
-├── backend/                   # Python FastAPI
+├── backend/                      # Python FastAPI (Cloud Run)
 │   ├── app/
-│   │   ├── core/              # Shared infrastructure (Gemini client, configuration)
-│   │   ├── shared/            # Shared DB (Supabase) & unified FastAPI auth dependencies
-│   │   ├── routers/           # Scoped API routing (analytics, publishing, prompts, settings, marketplace)
-│   │   ├── services/          # Core domain logic (analytics, marketplace, prompts, publishing, engine)
-│   │   └── main.py            # Application bootstrap & middleware routing
-│   ├── Dockerfile             # Container configuration for Cloud Run
-│   └── requirements.txt       # Python dependencies
-├── frontend/                  # React + Vite + TypeScript (Dark Mode)
-│   ├── public/                # Static assets
-│   ├── src/
-│   │   ├── components/        # Isolated UI components (Auth, Dashboard)
-│   │   ├── layout/            # App shell, Navbar, and Sidebar layout
-│   │   ├── pages/             # App pages (DiscoverPage, DashboardPage, Content, PublishPage, LearnPage, SettingsPageNew)
-│   │   └── App.tsx            # Application router and layout wrapping
-│   └── index.html             # Entry point
-└── deploy.ps1                 # Deployment script for Google Cloud Run
+│   │   ├── core/
+│   │   │   ├── llm.py            # NVIDIA NIM client factory + retry helper
+│   │   │   └── config.py         # Environment configuration
+│   │   ├── routers/
+│   │   │   ├── autopilot.py      # POST /engine/autopilot + SSE /stream + GET /analytics/summary
+│   │   │   ├── publishing.py     # POST /publish/post — LinkedIn OAuth + X web intent
+│   │   │   └── ...               # campaign, analytics, marketplace, prompts
+│   │   ├── services/
+│   │   │   ├── engine.py         # Brand DNA scraping (Playwright + NVIDIA vision)
+│   │   │   ├── voice_service.py  # Authenticity scoring
+│   │   │   └── publishing_service.py  # Token encryption + platform dispatch
+│   │   └── main.py
+│   ├── database/schema.sql       # Full Supabase schema (RLS, oauth_state table)
+│   └── requirements.txt
+└── frontend/                     # React + Vite + TypeScript
+    └── src/
+        ├── components/
+        │   ├── DistributionStats.tsx   # Weekly stats strip (Signal page)
+        │   └── DistributeModal.tsx     # Multi-channel distribute modal
+        ├── hooks/
+        │   └── useConnectedAccounts.ts # Social connection state management
+        ├── layout/
+        │   └── Sidebar.tsx             # Distribution Engine nav (Signal/Draft/Refine/Distribute/Measure)
+        ├── pages/
+        │   ├── DashboardPage.tsx       # SSE streaming generation + DistributeModal
+        │   ├── DiscoverPage.tsx        # Signal cards + DistributionStats strip
+        │   ├── SettingsPageNew.tsx     # Settings hub (Brand/Connections/Marketplace/Account)
+        │   └── PublishPage.tsx         # Connected accounts + publish history
+        └── services/
+            └── apiService.ts           # Social connection CRUD + publishing methods
 ```
 
-### Modular Refactor Overview (Phases 0-2)
-* **Core Infrastructure (`app/core/`)**: Standardized Gemini client factory (`gemini.py`) with integrated backoff and automatic retry logic.
-* **Shared Utilities (`app/shared/`)**: Unified Supabase DB client factory (`db.py`) and a shared FastAPI dependency helper (`deps.py`) to manage JWT authentication and request context.
-* **Dead Code Pruned**: Legacy, unmaintained shims and dead controllers (such as `auditor.py`, `factory.py`, `imagen.py`, and `supabase.py`) have been removed to reduce bundle size and security risk.
-
 ---
 
-## 🗺️ Information Architecture Redesign
+## 📡 API Reference
 
-The navigation layout has been refactored around the core user journey to allow absolute clarity:
+All endpoints require `Authorization: Bearer <supabase_jwt>` (user_id always derived from JWT, never from request body).
 
-| Step | Section | Route | Target Component | Former Stubs Redirected / Merged |
-| :--- | :--- | :--- | :--- | :--- |
-| **1** | **Discover** | `/discover` | `DiscoverPage` | `/dashboard` (home), AI Actions panel |
-| **2** | **Plan** | `/plan` | `DashboardPage` | `/campaigns`, `/ai-studio`, `/dashboard/create` |
-| **3** | **Create** | `/create` | `Content` | `/content` editor |
-| **4** | **Publish** | `/publish` | `PublishPage` | `/history`, `/automations` |
-| **5** | **Learn** | `/learn` | `LearnPage` | `/seo`, `/competitors`, `/analytics` |
-| **-** | **Settings** | `/settings` | `SettingsPageNew` | `/settings`, `/marketplace/*`, OAuth settings |
-
----
-
-## 📡 API Endpoints
-
-The API is structured around modular, domain-specific prefixes under the `/v1` namespace:
+### Autopilot Engine
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/engine/autopilot` | Generate post from signal (non-streaming) |
+| `POST` | `/v1/engine/autopilot/stream` | Generate post as SSE stream (word-by-word) |
+| `GET` | `/v1/engine/analytics/summary` | Distribution stats for current user |
 
 ### Campaign & Brand DNA
-* `POST /v1/campaign/onboard` - Extracts detailed Brand DNA using Gemini from an input URL or text source.
-* `POST /v1/campaign/plan` - Generates a multi-platform campaign outline and brief.
-* `POST /v1/campaign/launch` - Generates drafts for designated channels and runs the self-audit loop.
-* `POST /v1/campaign/edit` - Updates campaign draft files using AI-directed revision guidelines.
-* `POST /v1/discovery` - Deprecated compatibility route for Brand DNA extraction.
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/campaign/onboard` | Scrape URL → extract Brand DNA → store in Supabase |
+| `POST` | `/v1/campaign/launch` | Batch generation for X + LinkedIn + Instagram |
+| `POST` | `/v1/campaign/edit` | AI-directed draft revision |
+| `GET` | `/v1/campaign/watchdog` | Poll for new products on a URL |
 
-### Analytics & Performance
-* `GET /v1/analytics` - Fetches overall brand performance telemetry and metrics.
-* `GET /v1/analytics/post/{post_id}` - Fetches detailed analytics tracking for a single post.
+### Publishing & OAuth
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/publish/post` | Publish to connected platforms |
+| `GET` | `/v1/connect/linkedin` | Generate LinkedIn OAuth URL |
+| `GET` | `/v1/connect/linkedin/callback` | Handle LinkedIn OAuth callback |
+| `GET` | `/v1/publishing/connected` | List connected social accounts |
 
-### Publishing & Integrations
-* `POST /v1/publishing` - Publishes approved campaign drafts to connected platforms immediately.
-* `POST /v1/publishing/schedule` - Schedules campaign drafts for automatic deployment.
-* `GET /v1/publishing/connected` - Fetches list of active Oauth integrations (e.g. LinkedIn, Twitter).
-* `GET /v1/connect/linkedin` - Generates secure authentication URL for LinkedIn connection.
-
-### Marketplace & Distribution
-* `GET /v1/marketplace/voices` - Lists available AI voice presets.
-* `POST /v1/marketplace/voices/{voice_id}/fork` - Creates a personal fork of a public voice avatar.
-* `GET /v1/weekly` - Retrieves the active weekly alignment prompt.
-* `POST /v1/weekly/{prompt_id}/answer` - Submits answers to build or refine alignment preferences.
+### Onboarding & Status
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/onboarding/status` | Check if user has Brand DNA + connected accounts |
 
 ---
 
-## 🛠️ Getting Started
+## 🛠️ Local Setup
 
 ### Prerequisites
-- **Python 3.11+**
-- **Node.js 18+**
-- **Supabase Account** (For Auth database integration)
-- **Google Gemini API Key**
+- Python 3.11+, Node.js 18+
+- Supabase account (auth + database)
+- NVIDIA NIM API key (generate at [build.nvidia.com](https://build.nvidia.com))
 
-### Environment Configuration
+### Environment Variables
 
-**1. Backend Config (`backend/.env`)**
-Create `backend/.env` with:
+**`backend/.env`**
 ```env
-GEMINI_API_KEY=your_gemini_key
-GEMINI_MODEL_ID=gemini-2.5-flash
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+# NVIDIA NIM (required for all AI features)
+NVIDIA_API_KEY=nvapi-...
+NVIDIA_MODEL_ID=nvidia/llama-3.1-nemotron-70b-instruct
+
+# Supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+JWT_SECRET=your_supabase_jwt_secret
+
+# LinkedIn OAuth
+LINKEDIN_CLIENT_ID=your_linkedin_client_id
+LINKEDIN_CLIENT_SECRET=your_linkedin_client_secret
+LINKEDIN_REDIRECT_URI=http://localhost:8080/v1/connect/linkedin/callback
+
+# Token encryption (generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+FERNET_KEY=your_fernet_key
+
 PORT=8080
 ```
 
-**2. Frontend Config (`frontend/.env.local`)**
-Create `frontend/.env.local` with:
+**`frontend/.env.local`**
 ```env
 VITE_API_URL=http://localhost:8080
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
 
-### Local Dev Startup
+### Database Setup
 
-**Start Backend API:**
+Run [schema.sql](./backend/database/schema.sql) in your Supabase SQL editor. Includes:
+- `brand_dna` — extracted brand voice per user
+- `autopilot_drafts` — all generated posts with signal metadata
+- `published_posts` — distribution history per channel
+- `social_connections` — encrypted OAuth tokens
+- `oauth_state` — HMAC-signed state tokens for secure OAuth flow
+- Row-Level Security policies on all user tables
+
+### Run Locally
+
 ```bash
+# Backend
 cd backend
 python -m venv .venv
-source .venv/bin/activate  # (Windows: .venv\Scripts\activate)
+.venv\Scripts\activate       # Windows
 pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8080
-```
 
-**Start Frontend Application:**
-```bash
+# Frontend (new terminal)
 cd frontend
 npm install
 npm run dev
+# → http://localhost:5173
 ```
-*Access the AI dashboard at `http://localhost:3000`*
 
 ---
 
-## ☁️ Cloud Run Deployment
+## ☁️ Deploy to Cloud Run
 
-Deployment is automated via PowerShell script for GCP Cloud Run environments.
-
-1. Ensure the `gcloud` CLI is installed and configured.
-2. Run the deployment sequence from the root directory:
 ```powershell
+# From repo root
 .\deploy.ps1
 ```
 
+Requires `gcloud` CLI installed and authenticated to your GCP project.
+
 ---
 
-**BrandMeld — The Personal Distribution Engine for People Who Hate Marketing.** 🚀
+## 🧪 Tests
+
+```bash
+cd backend
+python -m pytest tests/ -v
+# → 25 passed
+```
+
+---
+
+## 🏆 Competitive Edge
+
+| Tool | What they do | Gap |
+|---|---|---|
+| Taplio | LinkedIn AI writer | Single platform. No distribution system. |
+| Buffer AI | Scheduling | Generic AI. No brand voice DNA. |
+| Jasper | Long-form writing | No distribution, no publishing, no analytics. |
+| Postwise | Twitter AI | Single platform. No system. |
+| **BrandMeld** | **Full distribution engine** | Brand voice → Signal detection → Multi-channel blast → Analytics → Repeat. The whole loop. |
+
+The moat isn't the AI writing. The moat is the **flywheel**: every distribution event makes BrandMeld smarter about what works for that specific founder.
+
+---
+
+**BrandMeld — Your Weekly Distribution Engine.** ⚡

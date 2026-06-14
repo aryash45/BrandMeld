@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 interface LandingPageProps {
   onLoginClick: () => void;
@@ -19,6 +21,36 @@ const FeatureCard: React.FC<{ title: string; desc: string; icon: React.ReactNode
 );
 
 const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
+  const { session } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (session) {
+      const checkOnboarding = async () => {
+        const token = session.access_token;
+        let redirectTo = '/discover';
+        if (token) {
+          try {
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+            const res = await fetch(`${API_URL}/v1/onboarding/status`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (res.ok) {
+              const status = await res.json();
+              if (status && status.has_brand_dna === false) {
+                redirectTo = '/onboarding';
+              }
+            }
+          } catch (e) {
+            console.error('[LandingPage] Failed to query onboarding status:', e);
+          }
+        }
+        navigate(redirectTo, { replace: true });
+      };
+      checkOnboarding();
+    }
+  }, [session, navigate]);
+
   return (
     <div className="font-body relative flex min-h-screen flex-col items-center bg-black text-white selection:bg-brand-yellow selection:text-black overflow-x-hidden">
       {/* Navbar Grid Lines */}

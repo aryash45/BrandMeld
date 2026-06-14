@@ -1,212 +1,409 @@
 /**
- * DiscoverPage — "What should I talk about today?"
+ * DiscoverPage — Three-door entry point.
  *
- * Merges:
- *   - AI Daily Brief + sparklines  (was Dashboard.tsx)
- *   - Weekly Prompt banner          (was dashboard/DashboardHome.tsx)
- *   - Quick action shortcuts
+ * The founder picks which kind of week they had, types one raw thought,
+ * and BrandMeld does everything else. No form fields. No platform picker.
+ * No tone selector. The three cards are the only decision.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { AreaChart, Area, ResponsiveContainer } from 'recharts';
+import DistributionStats from '../components/DistributionStats';
 
-// ── Mock sparkline data (replace with real API) ──────────────────────────────
-const SPARKLINE_IMPRESSIONS = [{ v: 8400 }, { v: 9200 }, { v: 8700 }, { v: 11000 }, { v: 10400 }, { v: 12800 }, { v: 14200 }];
-const SPARKLINE_ENGAGEMENT  = [{ v: 3.1 }, { v: 3.4 }, { v: 3.2 }, { v: 3.8 }, { v: 3.6 }, { v: 3.3 }, { v: 4.1 }];
-const SPARKLINE_SEO         = [{ v: 2100 }, { v: 2300 }, { v: 2200 }, { v: 2600 }, { v: 2800 }, { v: 2700 }, { v: 3100 }];
+// ── Card definitions ──────────────────────────────────────────────────────────
 
-const RECENT_CONTENT = [
-  { title: 'Why I stopped using ChatGPT for marketing', platform: 'LinkedIn', impressions: '12.4K', engagement: '4.2%', trend: 'up',   aiNote: 'Top performer this week' },
-  { title: '5 lessons from our first 1,000 customers',  platform: 'X',        impressions: '8.1K',  engagement: '3.7%', trend: 'up',   aiNote: 'High repost velocity' },
-  { title: 'How we cut CAC by 40% with SEO',            platform: 'LinkedIn', impressions: '5.9K',  engagement: '2.1%', trend: 'down', aiNote: 'Below avg — repurpose?' },
+type CardType = 'happened' | 'clicked' | 'hard';
+
+interface CardDef {
+  id: CardType;
+  label: string;
+  subtitle: string;
+  placeholder: string;
+  accentColor: string;
+  accentDim: string;
+  icon: string;
+}
+
+const CARDS: CardDef[] = [
+  {
+    id: 'happened',
+    label: 'Something happened.',
+    subtitle: 'A launch, a milestone, a number, a ship.',
+    placeholder: 'What shipped or changed this week.',
+    accentColor: 'var(--accent)',
+    accentDim: 'var(--accent-dim)',
+    icon: '⚡',
+  },
+  {
+    id: 'clicked',
+    label: 'Something clicked.',
+    subtitle: 'A lesson, a take, a realization, an opinion.',
+    placeholder: 'What did you understand differently, or what do you believe that most people in your space would disagree with.',
+    accentColor: 'var(--blue)',
+    accentDim: 'var(--blue-dim)',
+    icon: '💡',
+  },
+  {
+    id: 'hard',
+    label: 'Something was hard.',
+    subtitle: 'A setback, a surprise, a pivot, an honest moment.',
+    placeholder: 'What did not go the way you expected.',
+    accentColor: 'var(--green)',
+    accentDim: 'rgba(16,185,129,0.08)',
+    icon: '🔥',
+  },
 ];
 
-const BRIEF_TEXT =
-  `Your LinkedIn engagement is up 18% this week — your last post drove 3× normal reach. ` +
-  `SEO traffic dropped on 3 high-intent keywords ("AI marketing tools", "founder content"). ` +
-  `2 competitors are outranking you on AI automation searches.`;
+// ── Main page ─────────────────────────────────────────────────────────────────
 
-// ── Sub-components ───────────────────────────────────────────────────────────
-const TypingText: React.FC<{ text: string }> = ({ text }) => {
-  const [displayed, setDisplayed] = useState('');
-  const i = useRef(0);
-  useEffect(() => {
-    const stored = sessionStorage.getItem('discover-brief');
-    if (stored === text) { setDisplayed(text); return; }
-    setDisplayed(''); i.current = 0;
-    const tick = setInterval(() => {
-      if (i.current < text.length) { setDisplayed(text.slice(0, i.current + 1)); i.current++; }
-      else { clearInterval(tick); sessionStorage.setItem('discover-brief', text); }
-    }, 16);
-    return () => clearInterval(tick);
-  }, [text]);
-  return <span>{displayed}</span>;
-};
-
-interface MetricProps { label: string; value: string; change: string; up: boolean; data: { v: number }[]; color: string; }
-const MetricCard: React.FC<MetricProps> = ({ label, value, change, up, data, color }) => (
-  <div className="card" style={{ padding: 20, flex: 1, minWidth: 0 }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-      <span className="label">{label}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99, background: up ? 'var(--green-dim)' : 'var(--red-dim)', color: up ? 'var(--green)' : 'var(--red)' }}>{change}</span>
-    </div>
-    <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', marginBottom: 12 }}>{value}</div>
-    <div style={{ height: 44 }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 2, bottom: 2, left: 0, right: 0 }}>
-          <defs>
-            <linearGradient id={`disc-grad-${label}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor={color} stopOpacity={0.3} />
-              <stop offset="95%" stopColor={color} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.5} fill={`url(#disc-grad-${label})`} dot={false} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  </div>
-);
-
-// ── Main page ────────────────────────────────────────────────────────────────
 const DiscoverPage: React.FC = () => {
-  const { user, session } = useAuth();
   const navigate = useNavigate();
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-  const tok = session?.access_token || '';
+  const { session } = useAuth();
+  const [hasBrandDna, setHasBrandDna] = useState<boolean | null>(null);
+  const [activeCard, setActiveCard] = useState<CardType | null>(null);
 
-  const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const displayName = (user?.user_metadata?.name as string | undefined) ?? user?.email?.split('@')[0] ?? 'Founder';
-  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-
-  // Weekly prompt from backend
-  const [weeklyPrompt, setWeeklyPrompt] = useState<{ id: string; prompt_text: string } | null>(null);
   useEffect(() => {
-    fetch(`${API_URL}/v1/prompts/weekly`, { headers: { Authorization: `Bearer ${tok}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => d && setWeeklyPrompt(d))
-      .catch(() => null);
-  }, []);
+    const checkStatus = async () => {
+      const token = session?.access_token;
+      if (!token) return;
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+        const res = await fetch(`${API_URL}/v1/onboarding/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const status = await res.json();
+          setHasBrandDna(!!status.has_brand_dna);
+        }
+      } catch (e) {
+        console.error('[DiscoverPage] Failed to load onboarding status:', e);
+      }
+    };
+    checkStatus();
+  }, [session]);
+  const [inputs, setInputs] = useState<Record<CardType, string>>({
+    happened: '',
+    clicked: '',
+    hard: '',
+  });
+  const inputRefs = useRef<Record<CardType, HTMLInputElement | null>>({
+    happened: null,
+    clicked: null,
+    hard: null,
+  });
 
-  const QUICK_ACTIONS = [
-    { label: 'Plan a Campaign', desc: 'What changed? Turn it into posts', to: '/plan', color: 'var(--accent)' },
-    { label: 'Create Content',  desc: 'Write and edit drafts',           to: '/create', color: 'var(--blue)' },
-    { label: 'View Analytics',  desc: 'See what\'s working',             to: '/learn',  color: 'var(--green)' },
-  ];
+  const activeInput = activeCard ? inputs[activeCard] : '';
+  const canGenerate = activeCard !== null && activeInput.trim().length >= 15;
+
+  const handleCardSelect = (id: CardType) => {
+    setActiveCard(id);
+    // Focus the input after the card expands (next tick)
+    setTimeout(() => {
+      inputRefs.current[id]?.focus();
+    }, 50);
+  };
+
+  const handleInputChange = (id: CardType, value: string) => {
+    setInputs((prev) => ({ ...prev, [id]: value }));
+  };
+
+  const handleGenerate = () => {
+    if (!activeCard || !canGenerate) return;
+    navigate('/plan', {
+      state: {
+        card_type: activeCard,
+        raw_input: inputs[activeCard].trim(),
+      },
+    });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && canGenerate) {
+      handleGenerate();
+    }
+  };
 
   return (
-    <div className="page">
-      {/* Header */}
-      <div style={{ marginBottom: 28 }}>
-        <div className="label" style={{ marginBottom: 6 }}>{dateStr}</div>
-        <h1 style={{ marginBottom: 4 }}>{greeting}, {displayName}</h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Here's what's happening with your brand today.</p>
-      </div>
-
-      {/* Weekly Prompt — from DashboardHome */}
-      {weeklyPrompt && (
-        <div className="card" style={{ padding: '20px 24px', marginBottom: 20, border: '1px solid var(--accent)', background: 'var(--accent-dim)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-light)', letterSpacing: '0.08em' }}>⚡ WEEKLY PROMPT</span>
+    <div className="page" style={{ maxWidth: 760, paddingTop: 48 }}>
+      {/* Distribution Stats strip — visible after first distribution */}
+      <DistributionStats />
+      {hasBrandDna === false && (
+        <div
+          style={{
+            background: 'var(--amber-dim, rgba(245,158,11,0.06))',
+            border: '1.5px solid var(--amber, #F59E0B)',
+            borderRadius: 'var(--radius-md)',
+            padding: '16px 20px',
+            marginBottom: 32,
+            fontSize: 13.5,
+            color: 'var(--text-primary)',
+            lineHeight: 1.6,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 12,
+            animation: 'fade-in 0.3s ease',
+          }}
+        >
+          <span style={{ fontSize: 18, lineHeight: 1 }}>💡</span>
+          <div>
+            <strong style={{ color: 'var(--amber, #F59E0B)' }}>Autopilot is using a default voice.</strong>
+            <div style={{ marginTop: 2, color: 'var(--text-secondary)' }}>
+              Since BrandMeld is built to market your brand according to its authentic identity, please{' '}
+              <a
+                href="/onboarding"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate('/onboarding');
+                }}
+                style={{
+                  color: 'var(--accent-light, #818CF8)',
+                  textDecoration: 'underline',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                scan your website now
+              </a>{' '}
+              to build your custom Brand DNA voice profile.
+            </div>
           </div>
-          <p style={{ fontSize: 15, color: 'var(--text-primary)', marginBottom: 14, lineHeight: 1.6 }}>"{weeklyPrompt.prompt_text}"</p>
-          <button
-            onClick={() => navigate('/plan', { state: { promptText: weeklyPrompt.prompt_text } })}
-            className="btn btn-primary btn-sm"
-          >
-            Answer &amp; Plan Campaign →
-          </button>
         </div>
       )}
 
-      {/* AI Daily Brief */}
-      <div className="card ai-glow" style={{ padding: 24, marginBottom: 24, position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: 'linear-gradient(90deg, var(--accent), var(--blue), var(--accent))' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-          <span style={{ fontSize: 12, color: 'var(--accent-light)', fontWeight: 600, letterSpacing: '0.05em' }}>✦ AI DAILY BRIEF</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto' }}>
-            <span className="dot-live" />
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Live</span>
-          </span>
+      {/* Page header */}
+      <div style={{ marginBottom: 40, textAlign: 'center' }}>
+        <div
+          className="label"
+          style={{ marginBottom: 10, color: 'var(--accent-light)', letterSpacing: '0.12em' }}
+        >
+          ✦ YOUR WEEKLY DISTRIBUTION SIGNAL
         </div>
-        <p style={{ fontSize: 14.5, lineHeight: 1.75, color: 'var(--text-primary)', marginBottom: 20, maxWidth: 700 }}>
-          <TypingText text={BRIEF_TEXT} />
+        <h1 style={{ fontSize: '2rem', marginBottom: 10, letterSpacing: '-0.04em' }}>
+          What happened this week?
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 14.5, lineHeight: 1.6, maxWidth: 480, margin: '0 auto' }}>
+          Pick a signal. Type one raw thought. BrandMeld turns it into a multi-channel distribution event.
         </p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <span className="label" style={{ marginRight: 4, paddingTop: 2 }}>Priorities today:</span>
-          {[
-            { label: 'Publish comparison article', tag: 'SEO',     color: 'var(--accent)', to: '/plan' },
-            { label: 'Fix 3 metadata titles',      tag: 'Technical', color: 'var(--red)',  to: '/learn' },
-            { label: 'Repurpose viral thread',     tag: 'Content',  color: 'var(--green)', to: '/create' },
-          ].map((p, i) => (
-            <button
-              key={i}
-              onClick={() => navigate(p.to)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 99, background: 'var(--bg-elevated)', border: '1px solid var(--border-hover)', color: 'var(--text-primary)', fontSize: 12.5, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all var(--transition)' }}
-              onMouseEnter={e => (e.currentTarget.style.borderColor = p.color)}
-              onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-hover)')}
+      </div>
+
+      {/* Cards */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 14,
+          marginBottom: 28,
+        }}
+      >
+        {CARDS.map((card) => {
+          const isActive = activeCard === card.id;
+          const hasInput = inputs[card.id].trim().length > 0;
+
+          return (
+            <div
+              key={card.id}
+              id={`discover-card-${card.id}`}
+              role="button"
+              tabIndex={0}
+              aria-pressed={isActive}
+              onClick={() => handleCardSelect(card.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleCardSelect(card.id);
+                }
+              }}
+              style={{
+                background: isActive ? card.accentDim : 'var(--bg-surface)',
+                border: `1.5px solid ${isActive ? card.accentColor : 'var(--border)'}`,
+                borderRadius: 'var(--radius-lg)',
+                padding: '22px 26px',
+                cursor: 'pointer',
+                transition: 'all var(--transition-slow)',
+                outline: 'none',
+                userSelect: 'none',
+              }}
+              onMouseEnter={(e) => {
+                if (!isActive) {
+                  (e.currentTarget as HTMLDivElement).style.borderColor = card.accentColor;
+                  (e.currentTarget as HTMLDivElement).style.background = card.accentDim;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isActive) {
+                  (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)';
+                  (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface)';
+                }
+              }}
             >
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: p.color }} />
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Quick actions */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
-        {QUICK_ACTIONS.map(a => (
-          <button
-            key={a.to}
-            onClick={() => navigate(a.to)}
-            className="card"
-            style={{ flex: 1, minWidth: 180, padding: '16px 20px', textAlign: 'left', cursor: 'pointer', border: 'none', fontFamily: 'inherit', background: 'var(--bg-surface)', transition: 'all var(--transition)' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = a.color; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 700, color: a.color, marginBottom: 4 }}>{a.label}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{a.desc}</div>
-          </button>
-        ))}
-      </div>
-
-      {/* Performance Snapshot */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-        <MetricCard label="Impressions" value="14.2K" change="↑ 24%" up={true}  data={SPARKLINE_IMPRESSIONS} color="var(--accent)" />
-        <MetricCard label="Engagement"  value="4.1%"  change="↑ 8%"  up={true}  data={SPARKLINE_ENGAGEMENT}  color="var(--blue)" />
-        <MetricCard label="SEO Traffic" value="3.1K"  change="↑ 12%" up={true}  data={SPARKLINE_SEO}          color="var(--green)" />
-      </div>
-
-      {/* Recent Content */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Recent Content</span>
-          <button onClick={() => navigate('/create')} className="btn btn-ghost btn-sm">New post →</button>
-        </div>
-        {RECENT_CONTENT.map((post, i) => (
-          <div
-            key={i}
-            style={{ display: 'flex', alignItems: 'center', padding: '14px 20px', borderBottom: i < RECENT_CONTENT.length - 1 ? '1px solid var(--border)' : 'none', gap: 16, transition: 'background var(--transition)', cursor: 'pointer' }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            onClick={() => navigate('/learn')}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 500, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title}</div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span className="badge badge-indigo">{post.platform}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{post.aiNote}</span>
+              {/* Card header */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  marginBottom: isActive ? 18 : 6,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 20,
+                    lineHeight: 1,
+                    filter: isActive ? 'none' : 'grayscale(60%)',
+                    transition: 'filter var(--transition)',
+                  }}
+                >
+                  {card.icon}
+                </span>
+                <div style={{ flex: 1 }}>
+                  <div
+                    style={{
+                      fontSize: 15.5,
+                      fontWeight: 700,
+                      color: isActive ? card.accentColor : 'var(--text-primary)',
+                      letterSpacing: '-0.01em',
+                      transition: 'color var(--transition)',
+                      marginBottom: 2,
+                    }}
+                  >
+                    {card.label}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12.5,
+                      color: 'var(--text-secondary)',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {card.subtitle}
+                  </div>
+                </div>
+                {!isActive && hasInput && (
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: card.accentColor,
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
+                {isActive && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: card.accentColor,
+                      letterSpacing: '0.06em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Selected
+                  </span>
+                )}
               </div>
+
+              {/* Expandable input — only shown when this card is active */}
+              {isActive && (
+                <div
+                  style={{ animation: 'fade-up 0.2s ease forwards' }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    ref={(el) => { inputRefs.current[card.id] = el; }}
+                    id={`discover-input-${card.id}`}
+                    type="text"
+                    value={inputs[card.id]}
+                    onChange={(e) => handleInputChange(card.id, e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={card.placeholder}
+                    maxLength={1000}
+                    style={{
+                      width: '100%',
+                      padding: '11px 14px',
+                      background: 'var(--bg-base)',
+                      border: `1px solid ${card.accentColor}`,
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-primary)',
+                      fontFamily: 'inherit',
+                      fontSize: '0.9375rem',
+                      outline: 'none',
+                      transition: 'border-color var(--transition)',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = card.accentColor;
+                      e.currentTarget.style.boxShadow = `0 0 0 3px ${card.accentDim}`;
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  />
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: 11,
+                      color:
+                        inputs[card.id].trim().length >= 15
+                          ? card.accentColor
+                          : 'var(--text-muted)',
+                      transition: 'color var(--transition)',
+                    }}
+                  >
+                    {inputs[card.id].trim().length >= 15
+                      ? '✓ Ready to generate'
+                      : `${Math.max(0, 15 - inputs[card.id].trim().length)} more character${
+                          15 - inputs[card.id].trim().length === 1 ? '' : 's'
+                        } to unlock`}
+                  </div>
+                </div>
+              )}
             </div>
-            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{post.impressions}</div>
-              <div style={{ fontSize: 11, color: post.trend === 'up' ? 'var(--green)' : 'var(--red)' }}>{post.engagement} eng</div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {/* Generate button — appears only when ≥15 chars in active input */}
+      {canGenerate && (
+        <div
+          style={{
+            animation: 'fade-up 0.25s ease forwards',
+            display: 'flex',
+            justifyContent: 'center',
+          }}
+        >
+          <button
+            id="discover-generate-btn"
+            onClick={handleGenerate}
+            className="btn btn-primary btn-lg"
+            style={{
+              padding: '13px 36px',
+              fontSize: '1rem',
+              fontWeight: 700,
+              letterSpacing: '-0.01em',
+              background: 'var(--accent)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 'var(--radius-sm)',
+              boxShadow: '0 0 24px rgba(99,102,241,0.35)',
+              cursor: 'pointer',
+              transition: 'all var(--transition)',
+              width: '100%',
+              maxWidth: 400,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 36px rgba(99,102,241,0.5)';
+              (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 24px rgba(99,102,241,0.35)';
+              (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(0)';
+            }}
+          >
+            Generate Distribution →
+          </button>
+        </div>
+      )}
     </div>
   );
 };
