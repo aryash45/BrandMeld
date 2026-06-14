@@ -113,6 +113,39 @@ async def get_analytics_summary(
     n = len(posts)
     avg_er = round(total_likes / total_impressions * 100, 2) if total_impressions else 0
 
+    # ── Group engagement history by date ──────────────────────────────────
+    history_by_date: dict[str, dict] = {}
+    for post in posts:
+        m = metrics_by_post.get(post["id"], {})
+        likes = m.get("likes_count", 0)
+        retweets = m.get("retweets_count", 0)
+        impressions = m.get("impressions_count", 0)
+        
+        pub_date = post.get("published_at")
+        if not pub_date:
+            continue
+        # Extract YYYY-MM-DD
+        date_str = pub_date.split("T")[0]
+        
+        if date_str not in history_by_date:
+            history_by_date[date_str] = {"impressions": 0, "likes": 0}
+        history_by_date[date_str]["impressions"] += impressions
+        history_by_date[date_str]["likes"] += likes
+
+    engagement_history = []
+    for d_str, vals in sorted(history_by_date.items()):
+        imp = vals["impressions"]
+        lk = vals["likes"]
+        er = round(lk / imp * 100, 2) if imp else 0
+        engagement_history.append(
+            EngagementDataPoint(
+                date=d_str,
+                impressions=imp,
+                likes=lk,
+                engagement_rate=er
+            )
+        )
+
     top_posts_sorted = sorted(top_posts_raw, key=lambda x: x["likes"] + x["retweets"], reverse=True)[:5]
 
     top_posts = [TopPost(**p) for p in top_posts_sorted]
@@ -131,6 +164,7 @@ async def get_analytics_summary(
         top_posts=top_posts,
         platform_breakdown=platform_breakdown,
         insights=insights,
+        engagement_history=engagement_history,
     )
 
 

@@ -45,6 +45,7 @@ from app.routers.analytics import router as analytics_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.prompts import router as prompts_router
 from app.routers.settings import settings_router, onboarding_router, score_router
+from app.routers.autopilot import router as autopilot_router
 from app.shared.deps import get_user_id
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ _PUBLIC_PATHS = {
     "/openapi.json",
     "/redoc",
     "/v1/auth/linkedin/callback",  # OAuth callback must be public
+    "/v1/auth/register",           # Bypass email rate limits for register
 }
 
 
@@ -289,10 +291,65 @@ app.include_router(prompts_router, prefix="/v1")
 app.include_router(settings_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
 app.include_router(score_router, prefix="/v1")
+app.include_router(autopilot_router, prefix="/v1")
 
 # LinkedIn OAuth callback (public — no JWT required)
 app.include_router(linkedin_callback_router, prefix="/v1")
 
+
+from pydantic import BaseModel
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: str | None = None
+
+@app.post("/v1/auth/register", tags=["auth"])
+async def register(req: RegisterRequest):
+    """
+    Register a user directly using admin access to auto-confirm email.
+    Bypasses Supabase email rate limits and verification step for developer/testing convenience.
+    """
+    from fastapi import HTTPException
+    from app.shared.db import get_supabase_client
+    db = get_supabase_client()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database client not configured")
+    try:
+        attrs = {
+            "email": req.email,
+            "password": req.password,
+            "email_confirm": True,
+            "user_metadata": {"name": req.name or req.email.split("@")[0]}
+        }
+        # Run in thread pool to avoid blocking async event loop
+        user_response = await asyncio.to_thread(db.auth.admin.create_user, attrs)
+        if not user_response or not getattr(user_response, "user", None):
+            raise HTTPException(status_code=400, detail="Failed to register user via admin API")
+        return {"status": "success", "user_id": str(user_response.user.id)}
+    except Exception as exc:
+        logger.error("Admin user registration failed: %s", exc)
+        err_msg = str(exc)
+        if "already exists" in err_msg.lower() or "registered" in err_msg.lower():
+            raise HTTPException(status_code=400, detail="User is already registered in the system.")
+        raise HTTPException(status_code=400, detail=f"Registration failed: {err_msg}")
+
+class ImagenRequest(BaseModel):
+    brand_colors: list[str]
+    content_summary: str
+    platform: str
+
+@app.post("/api/imagen/generate", tags=["imagen (deprecated)"])
+async def generate_image(req: ImagenRequest):
+    from fastapi import HTTPException
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Image generation is not available in v0. "
+            "Gemini Flash does not return image blobs via the generate_content() method. "
+            "Real image gen (Imagen 3 / Photoroom) ships in v1."
+        ),
+    )
 
 @app.get("/health", tags=["meta"])
 async def health():
@@ -328,7 +385,7 @@ async def discover(request: Request, url: str):
     user_id = get_user_id(request)  # P0-4: enforces auth
     try:
         dna: _BrandDNA = await _extract_brand_dna(url)
-        dna_data = {**dna.model_dump(), "url": url}
+        dna_data = dna.model_dump()
     except ValueError as exc:
         raise _HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
@@ -339,8 +396,8 @@ async def discover(request: Request, url: str):
     try:
         db = _get_supabase_for_discovery()
         if db:
-            row = {**dna_data, "user_id": user_id}
-            saved = db.table("brand_dna").upsert(row, on_conflict="url").execute()
+            row = {**dna_data, "user_id": user_id, "source_url": url}
+            saved = db.table("brand_dna").upsert(row, on_conflict="user_id").execute()
             if saved.data:
                 return {"status": "success", "data": saved.data[0]}
     except Exception:

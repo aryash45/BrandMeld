@@ -5,8 +5,7 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.6
 
-# Google AI — unified new SDK only
-google-genai>=1.0.0
+# LLM client requires httpx, which is already listed below
 
 # JWT validation for Supabase auth middleware
 PyJWT>=2.8.0

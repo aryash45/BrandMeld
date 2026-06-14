@@ -7,7 +7,7 @@ standalone /v1/discovery route.
 
 Architecture
 ------------
-  DiscoveryService  — scrapes a URL → BrandDNA (Playwright + Gemini vision)
+  DiscoveryService  — scrapes a URL → BrandDNA (Playwright + NVIDIA vision)
   _audit_content    — internal self-correction step (never exposed as an API)
   campaign router   — /v1/campaign/* endpoints:
       POST /v1/campaign/launch     — zero-config batch launch (X + LinkedIn + Instagram)
@@ -15,10 +15,10 @@ Architecture
       POST /v1/campaign/onboard    — scrape URL → store Brand DNA in Supabase
       GET  /v1/campaign/watchdog   — lightweight poll for new products on a URL
 
-SDK: google-genai >= 1.0.0 (unified, new SDK only)
+SDK: NVIDIA NIM API (OpenAI-compatible)
 """
 
-from __future__ import annotations
+# from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -35,23 +35,27 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from google import genai
-from google.genai import types as genai_types
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from app.shared.deps import get_user_id
 
-# Use shared Gemini infrastructure instead of duplicating it
-from app.core.gemini import (
-    get_gemini_client as _get_client,
+# Use shared LLM infrastructure instead of duplicating it
+from app.core.llm import (
+    get_llm_client as _get_client,
     get_model_id as _get_model_id,
-    is_retryable_gemini_error as _is_retryable_gemini_error,
+    is_retryable_error as _is_retryable_gemini_error,
     generate_content_with_retry as _generate_content_with_retry,
     DEFAULT_MODEL_ID,
-    GEMINI_RETRY_DELAYS,
+    LLM_RETRY_DELAYS as GEMINI_RETRY_DELAYS,
+    Part,
+    GenerateContentConfig,
 )
+
+class genai_types:
+    Part = Part
+    GenerateContentConfig = GenerateContentConfig
 from app.shared.db import get_supabase_client as _get_supabase
 
 logger = logging.getLogger(__name__)
@@ -63,8 +67,45 @@ limiter = Limiter(key_func=get_remote_address)
 DEFAULT_PLATFORMS = ["twitter", "linkedin", "newsletter"]
 
 
-# ─── Brand DNA ────────────────────────────────────────────────────────────────
+# ─── Platform constraints ─────────────────────────────────────────────────────
 
+PLATFORM_CONSTRAINTS: dict[str, str] = {
+    "twitter": (
+        "PLATFORM: X / Twitter Thread\n"
+        "- Write as a numbered thread (1/, 2/, 3/...)\n"
+        "- Each tweet must be under 280 chars INCLUDING the number prefix\n"
+        "- Start with a strong hook tweet that stands alone\n"
+        "- End with a CTA or summary tweet\n"
+        "- No filler. Every tweet must add value."
+    ),
+    "linkedin": (
+        "PLATFORM: LinkedIn Post\n"
+        "- Hook-Story-Insight-CTA format\n"
+        "- Hook: first 2 lines must stop the scroll (no 'Excited to share...' openers)\n"
+        "- 150-300 words total; short paragraphs (1-2 sentences max)\n"
+        "- End with a single question or CTA\n"
+        "- 3-5 relevant hashtags on the last line"
+    ),
+    "instagram": (
+        "PLATFORM: Instagram Caption\n"
+        "- Conversational and authentic — a person talking, not a brand\n"
+        "- 100-150 words\n"
+        "- Start with an attention-grabbing first line\n"
+        "- Short punchy paragraphs\n"
+        "- End with 5-8 relevant hashtags on a new line"
+    ),
+    "newsletter": (
+        "PLATFORM: Email Newsletter Section\n"
+        "- Thought-leadership opener paragraph (2-3 sentences)\n"
+        "- 250-400 words total; use subheadings if helpful\n"
+        "- Write like you're emailing a smart friend\n"
+        "- End with a clear CTA (reply, click, share)\n"
+        "- NO subject line — just body content"
+    ),
+}
+
+
+# ─── Request / Response models ────────────────────────────────────────────────
 
 class BrandDNA(BaseModel):
     brand_name: str
@@ -72,6 +113,101 @@ class BrandDNA(BaseModel):
     typography: list[str]
     voice_personality: str
     banned_concepts: list[str]
+
+
+class CampaignBrief(BaseModel):
+    what_changed: str = Field(min_length=1, max_length=2000)
+    why_it_matters: str = Field(default="", max_length=2000)
+    target_audience: str = Field(default="", max_length=1000)
+    proof_points: list[str] = Field(default_factory=list, max_length=8)
+    call_to_action: str = Field(default="", max_length=500)
+
+
+class CampaignChannelPlan(BaseModel):
+    platform: str
+    format: str
+    rationale: str
+
+
+class CampaignAngle(BaseModel):
+    title: str
+    audience_focus: str
+    core_message: str
+    proof_to_use: list[str] = Field(default_factory=list)
+    call_to_action: str
+    why_this_works: str
+
+
+class CampaignPlan(BaseModel):
+    campaign_headline: str
+    summary: str
+    primary_angle: CampaignAngle
+    alternate_angles: list[str] = Field(default_factory=list)
+    channels: list[CampaignChannelPlan] = Field(default_factory=list)
+    recommended_prompt: str
+    approval_checklist: list[str] = Field(default_factory=list)
+
+
+class CampaignPlanRequest(BaseModel):
+    brief: CampaignBrief
+    brand_voice: str | None = Field(default=None, max_length=5000)
+    brand_dna: BrandDNA | None = None
+    platforms: list[str] = Field(
+        default_factory=lambda: DEFAULT_PLATFORMS.copy(),
+        min_length=1,
+        max_length=len(PLATFORM_CONSTRAINTS),
+    )
+
+
+class CampaignPlanResponse(BaseModel):
+    plan: CampaignPlan
+    success: bool
+    message: str = ""
+
+
+class CampaignLaunchRequest(BaseModel):
+    content_request: str = Field(min_length=1, max_length=4000)
+    brand_voice: str | None = Field(default=None, max_length=5000)  # optional; falls back to stored DNA voice
+    brand_dna: BrandDNA | None = None       # optional pre-scraped DNA
+    platforms: list[str] = Field(
+        default_factory=lambda: DEFAULT_PLATFORMS.copy(),
+        min_length=1,
+        max_length=len(PLATFORM_CONSTRAINTS),
+    )
+
+
+class CampaignLaunchResponse(BaseModel):
+    results: dict[str, str]
+    success: bool
+    message: str = ""
+
+
+class EditRequest(BaseModel):
+    original_content: str = Field(min_length=1, max_length=12000)
+    brand_voice: str = Field(min_length=1, max_length=5000)
+    edit_command: str = Field(min_length=1, max_length=32)
+
+
+class EditResponse(BaseModel):
+    edited_content: str
+    success: bool
+    message: str = ""
+
+
+class OnboardRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class OnboardResponse(BaseModel):
+    brand_dna: BrandDNA
+    stored: bool
+    message: str = ""
+
+
+class WatchdogResponse(BaseModel):
+    new_products_detected: bool
+    draft_campaigns: list[dict] = Field(default_factory=list)
+    message: str = ""
 
 
 # ─── Discovery (internal + exposed via /onboard) ──────────────────────────────
@@ -201,7 +337,7 @@ def _fetch_page_context(url: str) -> str | None:
 
 
 async def _extract_brand_dna(url: str) -> BrandDNA:
-    """Core discovery routine — Playwright screenshot + Gemini vision → BrandDNA."""
+    """Core discovery routine — Playwright screenshot + NVIDIA vision → BrandDNA."""
     normalized = _normalize_url(url)
     screenshot, page_ctx = await asyncio.gather(
         _capture_screenshot(normalized),
@@ -235,7 +371,7 @@ async def _extract_brand_dna(url: str) -> BrandDNA:
         ),
     )
     if response.parsed is None:
-        raise RuntimeError("Brand discovery returned an empty response from Gemini")
+        raise RuntimeError("Brand discovery returned an empty response from the LLM. Please try again.")
     return response.parsed
 
 
@@ -265,43 +401,7 @@ async def _self_correct(draft: str, voice: str) -> str:
     return (resp.text or "").strip() or draft
 
 
-# ─── Platform constraints ─────────────────────────────────────────────────────
-
-
-PLATFORM_CONSTRAINTS: dict[str, str] = {
-    "twitter": (
-        "PLATFORM: X / Twitter Thread\n"
-        "- Write as a numbered thread (1/, 2/, 3/...)\n"
-        "- Each tweet must be under 280 chars INCLUDING the number prefix\n"
-        "- Start with a strong hook tweet that stands alone\n"
-        "- End with a CTA or summary tweet\n"
-        "- No filler. Every tweet must add value."
-    ),
-    "linkedin": (
-        "PLATFORM: LinkedIn Post\n"
-        "- Hook-Story-Insight-CTA format\n"
-        "- Hook: first 2 lines must stop the scroll (no 'Excited to share...' openers)\n"
-        "- 150-300 words total; short paragraphs (1-2 sentences max)\n"
-        "- End with a single question or CTA\n"
-        "- 3-5 relevant hashtags on the last line"
-    ),
-    "instagram": (
-        "PLATFORM: Instagram Caption\n"
-        "- Conversational and authentic — a person talking, not a brand\n"
-        "- 100-150 words\n"
-        "- Start with an attention-grabbing first line\n"
-        "- Short punchy paragraphs\n"
-        "- End with 5-8 relevant hashtags on a new line"
-    ),
-    "newsletter": (
-        "PLATFORM: Email Newsletter Section\n"
-        "- Thought-leadership opener paragraph (2-3 sentences)\n"
-        "- 250-400 words total; use subheadings if helpful\n"
-        "- Write like you're emailing a smart friend\n"
-        "- End with a clear CTA (reply, click, share)\n"
-        "- NO subject line — just body content"
-    ),
-}
+# Platform constraints moved to the top of the file
 
 _GENERATOR_INSTRUCTION = """You are 'BrandMeld,' an expert personal branding and marketing AI.
 
@@ -669,8 +769,9 @@ async def onboard_brand(req: OnboardRequest, request: Request):
         sb = _get_supabase()
         if sb:
             # P0-3: user_id comes from JWT only — not from req body
-            row = {**dna.model_dump(), "url": req.url, "user_id": user_id}
-            sb.table("brand_dna").upsert(row, on_conflict="url").execute()
+            # source_url matches the schema column name; conflict on user_id (UNIQUE)
+            row = {**dna.model_dump(), "source_url": req.url, "user_id": user_id}
+            sb.table("brand_dna").upsert(row, on_conflict="user_id").execute()
             stored = True
     except Exception as exc:
         logger.warning("Supabase save failed (non-fatal): %s", exc)
@@ -686,8 +787,8 @@ async def onboard_brand(req: OnboardRequest, request: Request):
 @limiter.limit("10/minute")  # P1-7: rate limit watchdog poll
 async def watchdog_check(
     request: Request,
-    url: Annotated[str, Query(description="The brand's website URL to monitor")],
-    last_known_hash: Annotated[str | None, Query()] = None,
+    url: str = Query(..., description="The brand's website URL to monitor"),
+    last_known_hash: str | None = Query(default=None),
 ):
     """
     Lightweight background watchdog — polls a URL for new product content.

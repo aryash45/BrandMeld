@@ -41,12 +41,13 @@ from app.integrations.linkedin_client import (
 from app.config import get_settings
 from app.shared.deps import get_user_id
 from app.shared.db import get_supabase_client
+from supabase import create_client as _create_supabase_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/publish", tags=["publishing"])
 
 # P2-6: Allowlist for platform values
-_VALID_PLATFORMS = {"linkedin", "twitter"}
+_VALID_PLATFORMS = {"linkedin", "twitter", "instagram"}
 
 
 # ── OAuth state token helpers (P0-2, P1-5) ────────────────────────────────────
@@ -293,9 +294,8 @@ async def linkedin_callback(code: str, state: str, request: Request):
         if not s.supabase_url:
             raise ValueError("Supabase not configured")
 
-        from supabase import create_client
         from app.services.publishing_service import encrypt_token
-        sb = create_client(s.supabase_url, s.supabase_service_role_key)
+        sb = _create_supabase_client(s.supabase_url, s.supabase_service_role_key)
         sb.table("connected_accounts").upsert({
             "user_id": user_id,
             "platform": "linkedin",

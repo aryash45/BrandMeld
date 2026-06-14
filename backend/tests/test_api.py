@@ -44,7 +44,7 @@ def _make_token(expired: bool = False) -> str:
 def client(monkeypatch):
     """Return a TestClient with SUPABASE_JWT_SECRET patched in."""
     monkeypatch.setenv("SUPABASE_JWT_SECRET", _TEST_SECRET)
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-api-key")
+    monkeypatch.setenv("NVIDIA_API_KEY", "fake-api-key")
     monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "fake-service-role-key")
 
@@ -210,44 +210,40 @@ class TestImageGenRemoved:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestSDKUnification:
-    def test_old_sdk_not_imported_in_engine(self):
-        """engine.py must NOT import google.generativeai (old SDK)."""
+    def test_google_sdk_not_imported_in_engine(self):
+        """engine.py must NOT import any google/gemini SDK libraries."""
         engine_path = os.path.join(os.path.dirname(__file__), "..", "app", "services", "engine.py")
         with open(engine_path) as f:
             source = f.read()
 
-        assert "import google.generativeai" not in source, (
-            "engine.py still imports google.generativeai (old SDK). "
-            "Migrate all usage to 'from google import genai'."
+        assert "import google" not in source and "from google" not in source, (
+            "engine.py still imports google SDK libraries."
         )
         assert "google-generativeai" not in source, (
             "engine.py references google-generativeai package."
         )
+        assert "google-genai" not in source, (
+            "engine.py references google-genai package."
+        )
 
-    def test_old_sdk_not_in_requirements(self):
-        """requirements.txt must NOT list google-generativeai."""
+    def test_gemini_sdk_not_in_requirements(self):
+        """requirements.txt must NOT list google-genai or google-generativeai."""
         req_path = os.path.join(os.path.dirname(__file__), "..", "requirements.txt")
         with open(req_path) as f:
             reqs = f.read()
         assert "google-generativeai" not in reqs, (
             "google-generativeai is still in requirements.txt. Remove it."
         )
-
-    def test_new_sdk_present_in_requirements(self):
-        """requirements.txt must include google-genai."""
-        req_path = os.path.join(os.path.dirname(__file__), "..", "requirements.txt")
-        with open(req_path) as f:
-            reqs = f.read()
-        assert "google-genai" in reqs, (
-            "google-genai is missing from requirements.txt."
+        assert "google-genai" not in reqs, (
+            "google-genai is still in requirements.txt. Remove it."
         )
 
-    def test_engine_uses_genai_client(self):
-        """engine.py must use genai.Client (new SDK pattern)."""
+    def test_engine_uses_llm_client(self):
+        """engine.py must use unified LLM client from app.core.llm."""
         with open("app/services/engine.py") as f:
             source = f.read()
-        assert "genai.Client" in source or "_get_client" in source, (
-            "engine.py does not use the new genai.Client pattern."
+        assert "app.core.llm" in source and "_get_client" in source, (
+            "engine.py does not use the unified LLM client from app.core.llm."
         )
 
 

@@ -25,9 +25,9 @@ class Settings:
     supabase_anon_key: str = os.getenv("SUPABASE_ANON_KEY", "")
     supabase_jwt_secret: str = os.getenv("SUPABASE_JWT_SECRET", "")
 
-    # ── Gemini ────────────────────────────────────────────────────────────
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model_id: str = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash")
+    # ── LLM (NVIDIA NIM) ──────────────────────────────────────────────────
+    nvidia_api_key: str = os.getenv("NVIDIA_API_KEY", "")
+    nvidia_model_id: str = os.getenv("NVIDIA_MODEL_ID", "nvidia/llama-3.1-nemotron-70b-instruct")
 
     # ── Twitter / X ───────────────────────────────────────────────────────
     twitter_api_key: str = os.getenv("TWITTER_API_KEY", "")

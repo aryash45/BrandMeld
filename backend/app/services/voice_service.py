@@ -6,10 +6,12 @@ Scores a generated draft against the user's brand voice profile across
 Uses Gemini with structured JSON output. Target latency: <2 seconds.
 """
 from __future__ import annotations
+import asyncio
+import json
 import logging
 from app.config import get_settings
 from app.models.brand import AuthenticityScore
-from app.core.gemini import get_gemini_client
+from app.core.llm import get_llm_client, GenerateContentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +42,8 @@ async def score_draft(draft: str, voice_personality: str) -> AuthenticityScore:
     Returns AuthenticityScore with 4 dimension scores + hints.
     Falls back to a default 75 score if Gemini fails (non-blocking).
     """
-    from google import genai
-    from google.genai import types as genai_types
-
     settings = get_settings()
-    if not settings.gemini_api_key:
+    if not settings.nvidia_api_key:
         return _fallback_score()
 
     prompt = (
@@ -54,20 +53,18 @@ async def score_draft(draft: str, voice_personality: str) -> AuthenticityScore:
     )
 
     try:
-        from google.genai import types as genai_types
-        client = get_gemini_client()
-        resp = await __import__("asyncio").to_thread(
+        client = get_llm_client()
+        resp = await asyncio.to_thread(
             lambda: client.models.generate_content(
-                model=settings.gemini_model_id,
+                model=settings.nvidia_model_id,
                 contents=prompt,
-                config=genai_types.GenerateContentConfig(
+                config=GenerateContentConfig(
                     system_instruction=_SCORING_SYSTEM,
                     response_mime_type="application/json",
                     temperature=0.2,   # low temp for deterministic scoring
                 ),
             )
         )
-        import json
         raw = json.loads(resp.text or "{}")
         tone = int(raw.get("tone_match", 75))
         vocab = int(raw.get("vocabulary_match", 75))
