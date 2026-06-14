@@ -1,430 +1,460 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+/**
+ * DashboardPage — "Generate your distribution."
+ *
+ * Upgraded to use SSE streaming (/v1/engine/autopilot/stream):
+ *   - Post content types out word-by-word (no blank waiting screen)
+ *   - Signal metadata (hook, audience, tone) appears as soon as extraction completes
+ *   - DistributeModal fires when post is ready for one-click multi-channel blast
+ *
+ * States:
+ *   loading      — minimal spinner while signal extracts
+ *   streaming    — post types out live, signal metadata visible
+ *   signal       — needs more detail (followup question)
+ *   result       — editable post + Distribute button
+ *   error        — retry / start over
+ */
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { useCampaignLauncher } from '../hooks/useCampaignLauncher';
-import EditToolbar from '../components/EditToolbar';
-import {
-  editCampaignDraft,
-  onboardBrand,
-  planCampaign,
-  PLATFORM_META,
-  type BrandDNA,
-  type CampaignBrief,
-  type CampaignPlan,
-  type EditCommand,
-  type Platform,
-} from '../services/apiService';
+import DistributeModal from '../components/DistributeModal';
 
-const DEFAULT_PLATFORMS: Platform[] = ['twitter', 'linkedin', 'newsletter'];
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-const Spinner: React.FC = () => (
-  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-    <path className="opacity-100" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-  </svg>
-);
+interface RouterState {
+  card_type: 'happened' | 'clicked' | 'hard';
+  raw_input: string;
+}
+
+interface SignalMeta {
+  hook: string;
+  audience: string;
+  register: string;
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const API_BASE_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:8080';
+
+const CARD_LABELS: Record<string, string> = {
+  happened: 'What changed',
+  clicked: 'Core belief',
+  hard: 'What went wrong',
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Fallback: non-streaming call for environments that block SSE */
+async function callAutopilotFallback(
+  raw_input: string,
+  card_type: string,
+  authToken: string,
+) {
+  const response = await fetch(`${API_BASE_URL}/v1/engine/autopilot`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({ raw_input, card_type }),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body?.detail || 'Generation failed. Try again.');
+  }
+  return body;
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 const DashboardPage: React.FC = () => {
-  const { user, session } = useAuth();
-  const authToken = session?.access_token;
-  const cam = useCampaignLauncher();
-  const resultsRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { session } = useAuth();
+  const authToken = session?.access_token ?? '';
 
-  const [localBrandDna, setLocalBrandDna] = useState<BrandDNA | null>(null);
-  const [onboardUrl, setOnboardUrl] = useState('');
-  const [onboardError, setOnboardError] = useState<string | null>(null);
-  const [isOnboarding, setIsOnboarding] = useState(false);
+  const state = location.state as RouterState | null;
 
-  const [whatChanged, setWhatChanged] = useState('');
-  const [whyItMatters, setWhyItMatters] = useState('');
-  const [targetAudience, setTargetAudience] = useState('');
-  const [callToAction, setCallToAction] = useState('');
-  const [proofDraft, setProofDraft] = useState('');
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(DEFAULT_PLATFORMS);
+  const [phase, setPhase] = useState<'loading' | 'streaming' | 'signal' | 'result' | 'error'>('loading');
+  const [signalMeta, setSignalMeta] = useState<SignalMeta | null>(null);
+  const [postText, setPostText] = useState('');
+  const [streamingText, setStreamingText] = useState('');
+  const [generationId, setGenerationId] = useState('');
+  const [authenticityScore, setAuthenticityScore] = useState(80);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [followupQuestion, setFollowupQuestion] = useState('');
+  const [followupAnswer, setFollowupAnswer] = useState('');
+  const [isFollowupLoading, setIsFollowupLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showDistributeModal, setShowDistributeModal] = useState(false);
 
-  const [plan, setPlan] = useState<CampaignPlan | null>(null);
-  const [planError, setPlanError] = useState<string | null>(null);
-  const [isPlanning, setIsPlanning] = useState(false);
-  const [plannedSignature, setPlannedSignature] = useState<string | null>(null);
+  const rawInputRef = useRef<string>(state?.raw_input ?? '');
+  const abortRef = useRef<AbortController | null>(null);
 
-  const [editingCmd, setEditingCmd] = useState<EditCommand | null>(null);
-  const [editLoading, setEditLoading] = useState(false);
-  const [localResults, setLocalResults] = useState<Partial<Record<Platform, string>>>({});
-  const [editHistory, setEditHistory] = useState<Partial<Record<Platform, string[]>>>({});
-  const [copied, setCopied] = useState<string | null>(null);
+  const generate = useCallback(async (rawInput: string) => {
+    if (!state?.card_type || !authToken) return;
+    setPhase('loading');
+    setErrorMsg(null);
+    setStreamingText('');
+    setPostText('');
+    setSignalMeta(null);
 
-  const proofPoints = useMemo(
-    () => proofDraft.split('\n').map((line) => line.trim()).filter(Boolean),
-    [proofDraft],
-  );
+    // Abort any previous stream
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
 
-  const brief = useMemo<CampaignBrief>(() => ({
-    what_changed: whatChanged.trim(),
-    why_it_matters: whyItMatters.trim(),
-    target_audience: targetAudience.trim(),
-    proof_points: proofPoints,
-    call_to_action: callToAction.trim(),
-  }), [callToAction, proofPoints, targetAudience, whatChanged, whyItMatters]);
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/engine/autopilot/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ raw_input: rawInput, card_type: state.card_type }),
+        signal: abortRef.current.signal,
+      });
 
-  const briefSignature = useMemo(
-    () => JSON.stringify({ brief, voice: cam.brandVoice, platforms: selectedPlatforms }),
-    [brief, cam.brandVoice, selectedPlatforms],
-  );
+      if (!response.ok || !response.body) {
+        throw new Error('Stream failed — falling back to standard generation.');
+      }
 
-  const activePlatform: Platform | null =
-    cam.activeTab && localResults[cam.activeTab]
-      ? cam.activeTab
-      : (Object.keys(localResults)[0] as Platform | undefined) ?? null;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullPost = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          try {
+            const event = JSON.parse(raw);
+
+            if (event.type === 'signal') {
+              setSignalMeta({ hook: event.hook, audience: event.audience, register: event.register });
+              setPhase('streaming');
+            } else if (event.type === 'token') {
+              fullPost += event.token;
+              setStreamingText(fullPost);
+            } else if (event.type === 'done') {
+              setGenerationId(event.generation_id || '');
+              setAuthenticityScore(event.authenticity_score || 80);
+              setPostText(fullPost);
+              setPhase('result');
+            } else if (event.type === 'needs_signal') {
+              setFollowupQuestion(event.question);
+              setPhase('signal');
+            } else if (event.type === 'error') {
+              throw new Error(event.message);
+            }
+          } catch (parseErr) {
+            // non-JSON SSE comment, skip
+          }
+        }
+      }
+    } catch (streamErr: unknown) {
+      if ((streamErr as Error).name === 'AbortError') return;
+
+      // Graceful fallback: try the non-streaming endpoint
+      try {
+        const res = await callAutopilotFallback(rawInput, state.card_type, authToken);
+        if (res.needs_more_signal) {
+          setFollowupQuestion(res.single_followup_question || 'Can you add one more specific detail?');
+          setPhase('signal');
+        } else {
+          setSignalMeta({ hook: res.hook_used, audience: res.inferred_audience, register: res.emotional_register });
+          setPostText(res.generated_post);
+          setGenerationId(res.generation_id || '');
+          setAuthenticityScore(res.authenticity_score || 80);
+          setPhase('result');
+        }
+      } catch (fallbackErr) {
+        setErrorMsg(fallbackErr instanceof Error ? fallbackErr.message : 'Something went wrong.');
+        setPhase('error');
+      }
+    }
+  }, [authToken, state?.card_type]);
 
   useEffect(() => {
-    if (cam.result?.results) {
-      setLocalResults(cam.result.results);
-      setEditHistory({});
-    }
-  }, [cam.result]);
-
-  useEffect(() => {
-    if (Object.keys(localResults).length > 0) {
-      const timer = setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
-      return () => clearTimeout(timer);
-    }
-  }, [localResults]);
-
-  const togglePlatform = useCallback((platform: Platform) => {
-    setSelectedPlatforms((current) => (
-      current.includes(platform)
-        ? (current.length === 1 ? current : current.filter((item) => item !== platform))
-        : [...current, platform]
-    ));
+    if (!state?.raw_input || !state?.card_type) return;
+    rawInputRef.current = state.raw_input;
+    generate(state.raw_input);
+    return () => abortRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleBrandScan = useCallback(async () => {
-    const url = onboardUrl.trim();
-    if (!url) return;
-    setIsOnboarding(true);
-    setOnboardError(null);
+  const handleFollowup = async () => {
+    if (!followupAnswer.trim() || isFollowupLoading) return;
+    const augmented = `${rawInputRef.current}\n${followupAnswer.trim()}`;
+    rawInputRef.current = augmented;
+    setIsFollowupLoading(true);
     try {
-      const dna = await onboardBrand(url, user?.id, authToken);
-      setLocalBrandDna(dna);
-      cam.setBrandVoice(dna.voice_personality);
-    } catch (err) {
-      setOnboardError(err instanceof Error ? err.message : 'SCAN_FAILURE');
+      await generate(augmented);
     } finally {
-      setIsOnboarding(false);
+      setIsFollowupLoading(false);
+      setFollowupAnswer('');
     }
-  }, [authToken, cam, onboardUrl, user?.id]);
+  };
 
-  const handlePlanCampaign = useCallback(async () => {
-    if (!brief.what_changed || selectedPlatforms.length === 0) return;
-    setIsPlanning(true);
-    setPlanError(null);
-    try {
-      const planningVoice =
-        cam.brandVoice.trim()
-        || localBrandDna?.voice_personality
-        || 'Confident, direct, and human. Explain why the product matters without sounding corporate.';
-      const response = await planCampaign(brief, planningVoice, localBrandDna, selectedPlatforms, authToken);
-      setPlan(response.plan);
-      setPlannedSignature(briefSignature);
-      if (!cam.brandVoice.trim()) {
-        cam.setBrandVoice(planningVoice);
-      }
-      cam.setContentRequest(response.plan.recommended_prompt);
-    } catch (err) {
-      setPlanError(err instanceof Error ? err.message : 'Campaign planning failed.');
-    } finally {
-      setIsPlanning(false);
-    }
-  }, [authToken, brief, briefSignature, cam, localBrandDna, selectedPlatforms]);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(postText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
-  const handleGenerateDrafts = useCallback(async () => {
-    if (!plan || plannedSignature !== briefSignature) return;
-    await cam.launch(localBrandDna, authToken, plan.recommended_prompt);
-  }, [authToken, briefSignature, cam, localBrandDna, plan, plannedSignature]);
+  // ── No state — redirect prompt ─────────────────────────────────────────────
 
-  const handleEdit = useCallback(async (cmd: EditCommand) => {
-    if (!activePlatform || !localResults[activePlatform] || editLoading) return;
-    const original = localResults[activePlatform]!;
-    setEditingCmd(cmd);
-    setEditLoading(true);
-    setEditHistory((history) => ({ ...history, [activePlatform]: [...(history[activePlatform] ?? []), original] }));
-    try {
-      const edited = await editCampaignDraft(original, cam.brandVoice || localBrandDna?.voice_personality || '', cmd, authToken);
-      setLocalResults((results) => ({ ...results, [activePlatform]: edited }));
-    } catch {
-      setEditHistory((history) => ({ ...history, [activePlatform]: (history[activePlatform] ?? []).slice(0, -1) }));
-    } finally {
-      setEditLoading(false);
-      setEditingCmd(null);
-    }
-  }, [activePlatform, authToken, cam.brandVoice, editLoading, localBrandDna, localResults]);
+  if (!state?.raw_input || !state?.card_type) {
+    return (
+      <div className="page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, gap: 20, textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 4 }}>⚡</div>
+        <h2 style={{ marginBottom: 8 }}>Start from Signal</h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 14, maxWidth: 360, marginBottom: 20 }}>
+          Pick a signal that matches your week, type one raw thought, and BrandMeld distributes it everywhere.
+        </p>
+        <button id="plan-go-to-discover" className="btn btn-primary" onClick={() => navigate('/discover')}>
+          Go to Signal →
+        </button>
+      </div>
+    );
+  }
 
-  const handleUndo = useCallback(() => {
-    if (!activePlatform) return;
-    const snapshots = editHistory[activePlatform] ?? [];
-    if (!snapshots.length) return;
-    setLocalResults((results) => ({ ...results, [activePlatform]: snapshots[snapshots.length - 1] }));
-    setEditHistory((history) => ({ ...history, [activePlatform]: snapshots.slice(0, -1) }));
-  }, [activePlatform, editHistory]);
+  // ── Loading ────────────────────────────────────────────────────────────────
 
-  const handleCopy = useCallback((platform: Platform) => {
-    const content = localResults[platform];
-    if (!content) return;
-    navigator.clipboard.writeText(content);
-    setCopied(platform);
-    setTimeout(() => setCopied(null), 1800);
-  }, [localResults]);
+  if (phase === 'loading') {
+    return (
+      <div className="page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 360, gap: 24 }}>
+        <div style={{ maxWidth: 520, width: '100%', background: 'var(--bg-elevated)', border: '1px solid var(--border-hover)', borderRadius: 'var(--radius-md)', padding: '16px 20px' }}>
+          <div className="label" style={{ marginBottom: 6 }}>Your signal</div>
+          <div style={{ color: 'var(--text-primary)', fontStyle: 'italic' }}>"{state.raw_input}"</div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 18, height: 18, border: '2px solid rgba(99,102,241,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Extracting signal…</div>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
-  const handleReset = useCallback(() => {
-    cam.reset();
-    setWhatChanged('');
-    setWhyItMatters('');
-    setTargetAudience('');
-    setCallToAction('');
-    setProofDraft('');
-    setSelectedPlatforms(DEFAULT_PLATFORMS);
-    setPlan(null);
-    setPlanError(null);
-    setPlannedSignature(null);
-    setLocalResults({});
-    setEditHistory({});
-  }, [cam]);
+  // ── Error ──────────────────────────────────────────────────────────────────
 
-  const isPlanStale = Boolean(plan && plannedSignature !== briefSignature);
-  const canUndo = activePlatform ? (editHistory[activePlatform]?.length ?? 0) > 0 : false;
-
-  return (
-    <main className="min-h-full bg-black px-8 py-10 text-white lg:px-12">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <section className="border-2 border-white p-8">
-          <p className="font-label text-xs uppercase tracking-[0.28em] text-brand-cyan">Founder Marketing Autopilot</p>
-          <h1 className="mt-4 max-w-4xl font-headline text-4xl font-black uppercase tracking-tight lg:text-6xl">
-            Plan the angle before you generate the copy
-          </h1>
-          <p className="mt-4 max-w-3xl text-base leading-relaxed text-white/70">
-            The product should start from what changed, why it matters, and what proof you have. That is how BrandMeld stops feeling like a wrapper.
-          </p>
-        </section>
-
-        <div className="grid gap-8 xl:grid-cols-[minmax(0,1.6fr)_360px]">
-          <section className="space-y-8">
-            <div className="border-2 border-white p-8">
-              <div className="mb-5">
-                <p className="font-label text-xs uppercase tracking-[0.26em] text-brand-yellow">Step 1</p>
-                <h2 className="mt-2 font-headline text-3xl font-black uppercase tracking-tight">Capture the signal</h2>
-                <p className="mt-2 text-sm leading-relaxed text-white/65">
-                  Use product reality, not a vague prompt. Feed the planner a real update, its payoff, and proof.
-                </p>
-              </div>
-
-              <div className="grid gap-5 lg:grid-cols-2">
-                <label className="lg:col-span-2">
-                  <span className="mb-2 block font-label text-xs uppercase tracking-[0.22em] text-white/65">What changed?</span>
-                  <textarea value={whatChanged} onChange={(event) => setWhatChanged(event.target.value)} rows={5} className="w-full border-2 border-white bg-black p-4 text-base outline-none focus:border-brand-yellow" placeholder="Shipped campaign planning before content generation." />
-                </label>
-                <label>
-                  <span className="mb-2 block font-label text-xs uppercase tracking-[0.22em] text-white/65">Why it matters</span>
-                  <textarea value={whyItMatters} onChange={(event) => setWhyItMatters(event.target.value)} rows={4} className="w-full border-2 border-white bg-black p-4 text-base outline-none focus:border-brand-yellow" placeholder="Users get a sharper story before the app writes anything." />
-                </label>
-                <label>
-                  <span className="mb-2 block font-label text-xs uppercase tracking-[0.22em] text-white/65">Target audience</span>
-                  <textarea value={targetAudience} onChange={(event) => setTargetAudience(event.target.value)} rows={4} className="w-full border-2 border-white bg-black p-4 text-base outline-none focus:border-brand-yellow" placeholder="Technical founders who hate marketing." />
-                </label>
-                <label>
-                  <span className="mb-2 block font-label text-xs uppercase tracking-[0.22em] text-white/65">Proof points</span>
-                  <textarea value={proofDraft} onChange={(event) => setProofDraft(event.target.value)} rows={5} className="w-full border-2 border-white bg-black p-4 text-base outline-none focus:border-brand-yellow" placeholder={"One per line\nUsers now see why a campaign angle works\nDraft generation follows an explicit plan"} />
-                </label>
-                <label>
-                  <span className="mb-2 block font-label text-xs uppercase tracking-[0.22em] text-white/65">Call to action</span>
-                  <textarea value={callToAction} onChange={(event) => setCallToAction(event.target.value)} rows={5} className="w-full border-2 border-white bg-black p-4 text-base outline-none focus:border-brand-yellow" placeholder="Invite them to try the new workflow." />
-                </label>
-              </div>
-
-              <div className="mt-6 flex flex-col gap-4 border-t border-white/15 pt-6 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <div className="mb-3 font-label text-xs uppercase tracking-[0.22em] text-white/65">Channels</div>
-                  <div className="flex flex-wrap gap-3">
-                    {DEFAULT_PLATFORMS.map((platform) => (
-                      <button key={platform} type="button" onClick={() => togglePlatform(platform)} className={`border-2 px-4 py-2 font-label text-xs uppercase tracking-[0.18em] ${selectedPlatforms.includes(platform) ? 'border-brand-yellow bg-brand-yellow text-black' : 'border-white hover:text-brand-cyan'}`}>
-                        {PLATFORM_META[platform].label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex gap-3">
-                  <button type="button" onClick={handleReset} className="border-2 border-white px-4 py-3 font-label text-xs uppercase tracking-[0.18em] hover:bg-white hover:text-black">Reset</button>
-                  <button type="button" onClick={handlePlanCampaign} disabled={!brief.what_changed || selectedPlatforms.length === 0 || isPlanning} className="flex items-center gap-3 border-2 border-black bg-brand-yellow px-5 py-3 font-headline text-xl font-black uppercase text-black disabled:opacity-50">
-                    {isPlanning ? <Spinner /> : null}
-                    {isPlanning ? 'Planning...' : 'Plan Campaign'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {(planError || cam.error) && (
-              <div className="border-2 border-red-500 bg-red-950/50 px-5 py-4 font-label text-xs uppercase tracking-[0.16em] text-red-200">
-                {planError ? `Planner error: ${planError}` : `Generation error: ${cam.error}`}
-              </div>
-            )}
-
-            <div className="border-2 border-white p-8">
-              <div className="mb-5">
-                <p className="font-label text-xs uppercase tracking-[0.26em] text-brand-yellow">Step 2</p>
-                <h2 className="mt-2 font-headline text-3xl font-black uppercase tracking-tight">Approve the angle</h2>
-                <p className="mt-2 text-sm leading-relaxed text-white/65">
-                  This is the aha moment. BrandMeld explains the story, why it works, and what proof it will use before it drafts anything.
-                </p>
-              </div>
-
-              {!plan ? (
-                <div className="border-2 border-dashed border-white/20 px-6 py-10 text-center text-white/45">
-                  Plan a campaign first. This panel will become your approval surface.
-                </div>
-              ) : (
-                <div className="space-y-5">
-                  <div className="border-2 border-brand-yellow bg-black p-5">
-                    <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-yellow">Recommended angle</div>
-                    <h3 className="mt-3 font-headline text-3xl font-black uppercase tracking-tight">{plan.primary_angle.title}</h3>
-                    <p className="mt-3 text-sm leading-relaxed text-white/75">{plan.summary}</p>
-                  </div>
-
-                  <div className="grid gap-5 lg:grid-cols-2">
-                    <div className="border border-white/20 p-5">
-                      <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">Why this works</div>
-                      <p className="mt-3 text-sm leading-relaxed text-white/80">{plan.primary_angle.why_this_works}</p>
-                      <div className="mt-4 font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">Audience focus</div>
-                      <p className="mt-2 text-sm leading-relaxed text-white/80">{plan.primary_angle.audience_focus}</p>
-                    </div>
-                    <div className="border border-white/20 p-5">
-                      <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">Core message</div>
-                      <p className="mt-3 text-sm leading-relaxed text-white/80">{plan.primary_angle.core_message}</p>
-                      <div className="mt-4 font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">CTA</div>
-                      <p className="mt-2 text-sm leading-relaxed text-white/80">{plan.primary_angle.call_to_action}</p>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-5 lg:grid-cols-2">
-                    <div className="border border-white/20 p-5">
-                      <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">Proof to use</div>
-                      <ul className="mt-3 space-y-2 text-sm leading-relaxed text-white/80">
-                        {plan.primary_angle.proof_to_use.map((item) => <li key={item}>• {item}</li>)}
-                      </ul>
-                    </div>
-                    <div className="border border-white/20 p-5">
-                      <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">Approval checklist</div>
-                      <ul className="mt-3 space-y-2 text-sm leading-relaxed text-white/80">
-                        {plan.approval_checklist.map((item) => <li key={item}>• {item}</li>)}
-                      </ul>
-                    </div>
-                  </div>
-
-                  <div className="border border-white/20 p-5">
-                    <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">Channel strategy</div>
-                    <div className="mt-3 grid gap-3 lg:grid-cols-3">
-                      {plan.channels.map((channel) => (
-                        <div key={channel.platform} className="border border-white/10 p-3">
-                          <div className="font-label text-[11px] uppercase tracking-[0.18em] text-white/45">{PLATFORM_META[channel.platform as Platform]?.label ?? channel.platform}</div>
-                          <div className="mt-1 text-sm font-semibold text-white/85">{channel.format}</div>
-                          <p className="mt-1 text-sm leading-relaxed text-white/70">{channel.rationale}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3 border-t border-white/15 pt-5 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="text-sm text-white/55">
-                      {isPlanStale ? 'Inputs changed. Refresh the plan before drafting.' : 'The plan is current. Generate drafts when you are happy with it.'}
-                    </div>
-                    <button type="button" onClick={handleGenerateDrafts} disabled={!plan || isPlanStale || cam.isLaunching} className="flex items-center gap-3 border-2 border-black bg-brand-cyan px-5 py-3 font-headline text-xl font-black uppercase text-black disabled:opacity-50">
-                      {cam.isLaunching ? <Spinner /> : null}
-                      {cam.isLaunching ? 'Generating...' : 'Generate Drafts'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {Object.keys(localResults).length > 0 && (
-              <div ref={resultsRef} className="border-2 border-white p-8">
-                <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <p className="font-label text-xs uppercase tracking-[0.26em] text-brand-yellow">Step 3</p>
-                    <h2 className="mt-2 font-headline text-3xl font-black uppercase tracking-tight">Refine the drafts</h2>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    {(Object.keys(localResults) as Platform[]).map((platform) => (
-                      <button key={platform} type="button" onClick={() => cam.setActiveTab(platform)} className={`border-2 px-4 py-2 font-label text-xs uppercase tracking-[0.18em] ${activePlatform === platform ? 'border-brand-yellow bg-brand-yellow text-black' : 'border-white hover:text-brand-cyan'}`}>
-                        {PLATFORM_META[platform].label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <EditToolbar isEditing={editLoading} activeCommand={editingCmd} onEdit={handleEdit} onUndo={handleUndo} canUndo={canUndo} disabled={cam.isLaunching} />
-
-                <div className="mt-6 border-2 border-white bg-black p-5">
-                  {activePlatform && localResults[activePlatform] ? (
-                    <>
-                      <div className="mb-4 flex items-center justify-between border-b border-dashed border-white/25 pb-3">
-                        <span className="font-label text-xs uppercase tracking-[0.22em] text-brand-cyan">{PLATFORM_META[activePlatform].label}</span>
-                        <div className="flex gap-3">
-                          <span className="font-label text-[11px] uppercase tracking-[0.18em] text-white/45">{localResults[activePlatform]!.length} chars</span>
-                          <button type="button" onClick={() => handleCopy(activePlatform)} className="font-label text-[11px] uppercase tracking-[0.18em] text-brand-cyan">
-                            {copied === activePlatform ? 'Copied' : 'Copy'}
-                          </button>
-                        </div>
-                      </div>
-                      <textarea readOnly rows={18} value={localResults[activePlatform]!} className="custom-scrollbar w-full resize-none bg-transparent text-base leading-relaxed outline-none" />
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            )}
-          </section>
-
-          <aside className="space-y-6">
-            <div className="border-2 border-white p-5">
-              <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-yellow">Brand memory</div>
-              <p className="mt-3 text-sm leading-relaxed text-white/65">
-                Website scan is a support feature. It gives the planner context, but the hero is still product-signal-to-campaign.
-              </p>
-              <div className="mt-4 flex gap-3">
-                <input type="url" value={onboardUrl} onChange={(event) => setOnboardUrl(event.target.value)} className="min-w-0 flex-1 border-2 border-white bg-black px-4 py-3 text-sm outline-none focus:border-brand-cyan" placeholder="https://your-site.com" />
-                <button type="button" onClick={handleBrandScan} disabled={isOnboarding || !onboardUrl.trim()} className="border-2 border-black bg-brand-yellow px-4 py-3 font-label text-xs uppercase tracking-[0.18em] text-black disabled:opacity-50">
-                  {isOnboarding ? <Spinner /> : 'Scan'}
-                </button>
-              </div>
-              {onboardError && <div className="mt-3 text-xs uppercase tracking-[0.16em] text-red-400">{onboardError}</div>}
-              <div className="mt-5">
-                <div className="mb-2 font-label text-xs uppercase tracking-[0.22em] text-white/65">Voice override</div>
-                <textarea value={cam.brandVoice} onChange={(event) => cam.setBrandVoice(event.target.value)} rows={5} className="w-full border-2 border-white bg-black p-4 text-sm outline-none focus:border-brand-cyan" placeholder="Direct, specific, no corporate filler." />
-              </div>
-            </div>
-
-            <div className="border-2 border-white p-5">
-              <div className="font-label text-xs uppercase tracking-[0.22em] text-brand-yellow">Current context</div>
-              <div className="mt-4 space-y-4 text-sm text-white/75">
-                <div>
-                  <div className="font-label text-[11px] uppercase tracking-[0.18em] text-white/45">Brand</div>
-                  <div className="mt-1 font-semibold text-white">{localBrandDna?.brand_name || 'Manual mode'}</div>
-                </div>
-                <div>
-                  <div className="font-label text-[11px] uppercase tracking-[0.18em] text-white/45">Voice</div>
-                  <div className="mt-1">{cam.brandVoice || localBrandDna?.voice_personality || 'No voice loaded yet'}</div>
-                </div>
-                <div>
-                  <div className="font-label text-[11px] uppercase tracking-[0.18em] text-white/45">Proof signals</div>
-                  <div className="mt-1">{proofPoints.length > 0 ? `${proofPoints.length} proof point(s) ready` : 'Add proof so the plan stays specific.'}</div>
-                </div>
-                <div>
-                  <div className="font-label text-[11px] uppercase tracking-[0.18em] text-white/45">Difference</div>
-                  <div className="mt-1">The app now explains why a campaign angle works before it writes the drafts.</div>
-                </div>
-              </div>
-            </div>
-          </aside>
+  if (phase === 'error') {
+    return (
+      <div className="page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, gap: 20, textAlign: 'center' }}>
+        <div style={{ fontSize: 32 }}>⚠️</div>
+        <p style={{ color: 'var(--red)', background: 'var(--red-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-md)', padding: '14px 20px', fontSize: 14, maxWidth: 480 }}>
+          {errorMsg}
+        </p>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button id="plan-retry-btn" className="btn btn-primary" onClick={() => generate(rawInputRef.current)}>Try Again</button>
+          <button id="plan-start-over-error" className="btn btn-ghost" onClick={() => navigate('/discover', { replace: true, state: null })}>Start Over</button>
         </div>
       </div>
-    </main>
+    );
+  }
+
+  // ── Needs more signal ──────────────────────────────────────────────────────
+
+  if (phase === 'signal') {
+    return (
+      <div className="page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, gap: 24, maxWidth: 560, animation: 'fade-up 0.3s ease' }}>
+        <div className="label" style={{ color: 'var(--amber)', letterSpacing: '0.1em' }}>✦ ONE MORE SIGNAL</div>
+        <p style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.4, textAlign: 'center' }}>
+          {followupQuestion}
+        </p>
+        <div style={{ width: '100%' }}>
+          <input
+            id="plan-followup-input"
+            type="text"
+            value={followupAnswer}
+            onChange={e => setFollowupAnswer(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleFollowup()}
+            placeholder="Type your answer…"
+            autoFocus
+            style={{ width: '100%', padding: '12px 16px', background: 'var(--bg-elevated)', border: '1.5px solid var(--border-hover)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontFamily: 'inherit', fontSize: '1rem', outline: 'none', marginBottom: 12, transition: 'border-color var(--transition)' }}
+            onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+            onBlur={e => (e.currentTarget.style.borderColor = 'var(--border-hover)')}
+          />
+          <button
+            id="plan-followup-submit"
+            className="btn btn-primary"
+            disabled={!followupAnswer.trim() || isFollowupLoading}
+            onClick={handleFollowup}
+            style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
+          >
+            {isFollowupLoading ? 'Generating…' : 'Add signal and generate →'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Streaming / Result ─────────────────────────────────────────────────────
+
+  const displayText = phase === 'streaming' ? streamingText : postText;
+  const isStreaming = phase === 'streaming';
+  const coreContentLabel = CARD_LABELS[state.card_type] ?? 'Core content';
+
+  return (
+    <div className="page" style={{ animation: 'fade-up 0.3s ease' }}>
+      {/* Header */}
+      <div style={{ marginBottom: 28 }}>
+        <div className="label" style={{ marginBottom: 6, color: 'var(--accent-light)' }}>
+          {isStreaming ? '✦ GENERATING YOUR DISTRIBUTION' : '✦ READY TO DISTRIBUTE'}
+        </div>
+        <h1 style={{ fontSize: '1.6rem' }}>
+          {isStreaming ? 'Writing your post…' : 'Review and distribute.'}
+        </h1>
+      </div>
+
+      {/* Two-column grid */}
+      <div id="plan-result-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20 }}>
+
+        {/* ── Left: Signal metadata ── */}
+        <div className="card" style={{ padding: 24 }}>
+          <div className="label" style={{ marginBottom: 18, color: 'var(--accent-light)', fontSize: '0.7rem' }}>
+            ✦ SIGNAL METADATA
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>{coreContentLabel}</div>
+              <div style={{ fontSize: 13.5, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                {CARD_LABELS[state.card_type]}
+              </div>
+            </div>
+            {signalMeta && (
+              <>
+                <div>
+                  <div className="label" style={{ marginBottom: 4 }}>Audience</div>
+                  <div style={{ fontSize: 13.5, color: 'var(--text-primary)', lineHeight: 1.5 }}>{signalMeta.audience}</div>
+                </div>
+                <div>
+                  <div className="label" style={{ marginBottom: 4 }}>Opening hook</div>
+                  <div style={{ fontSize: 13.5, color: 'var(--text-primary)', lineHeight: 1.5, fontStyle: 'italic', borderLeft: '2px solid var(--accent)', paddingLeft: 12 }}>
+                    "{signalMeta.hook}"
+                  </div>
+                </div>
+                <div>
+                  <div className="label" style={{ marginBottom: 6 }}>Voice match</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ flex: 1, height: 6, background: 'var(--bg-elevated)', borderRadius: 99, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${authenticityScore}%`, background: authenticityScore >= 80 ? 'var(--green)' : authenticityScore >= 60 ? 'var(--amber)' : 'var(--red)', borderRadius: 99, transition: 'width 0.6s ease' }} />
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', color: authenticityScore >= 80 ? 'var(--green)' : authenticityScore >= 60 ? 'var(--amber)' : 'var(--red)', minWidth: 44 }}>
+                      {authenticityScore}/100
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <div className="label" style={{ marginBottom: 6 }}>Tone</div>
+                  <span className="badge badge-indigo" style={{ textTransform: 'capitalize', fontSize: 12 }}>{signalMeta.register}</span>
+                </div>
+              </>
+            )}
+            {!signalMeta && isStreaming && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Extracting signal…</div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Right: Streaming / editable post ── */}
+        <div className="card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="label" style={{ color: 'var(--blue)', fontSize: '0.7rem' }}>
+            ✦ YOUR LINKEDIN POST {isStreaming && <span style={{ color: 'var(--accent)', animation: 'pulse 1s infinite' }}>●</span>}
+          </div>
+
+          <textarea
+            id="plan-post-textarea"
+            value={displayText}
+            onChange={e => !isStreaming && setPostText(e.target.value)}
+            readOnly={isStreaming}
+            rows={16}
+            style={{
+              width: '100%',
+              background: 'var(--bg-elevated)',
+              border: `1px solid ${isStreaming ? 'var(--accent-dim)' : 'var(--border)'}`,
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-primary)',
+              fontFamily: 'inherit',
+              fontSize: '0.9rem',
+              lineHeight: 1.7,
+              padding: '14px 16px',
+              outline: 'none',
+              resize: isStreaming ? 'none' : 'vertical',
+              transition: 'border-color var(--transition)',
+              cursor: isStreaming ? 'default' : 'text',
+            }}
+            onFocus={e => !isStreaming && (e.currentTarget.style.borderColor = 'var(--blue)')}
+            onBlur={e => (e.currentTarget.style.borderColor = isStreaming ? 'var(--accent-dim)' : 'var(--border)')}
+          />
+
+          {/* Streaming cursor */}
+          {isStreaming && (
+            <div style={{ fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1s infinite' }} />
+              Generating…
+            </div>
+          )}
+
+          {/* Action buttons — only show when done */}
+          {phase === 'result' && (
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                id="plan-distribute-btn"
+                className="btn btn-primary"
+                onClick={() => setShowDistributeModal(true)}
+                style={{ flex: 1, justifyContent: 'center', background: 'var(--accent)', border: 'none' }}
+              >
+                ⚡ Distribute Now
+              </button>
+              <button
+                id="plan-copy-btn"
+                className="btn btn-ghost"
+                onClick={handleCopy}
+                style={{ flex: 1, justifyContent: 'center' }}
+              >
+                {copied ? '✓ Copied' : 'Copy'}
+              </button>
+              <button
+                id="plan-start-over-btn"
+                className="btn btn-ghost"
+                onClick={() => navigate('/discover', { replace: true, state: null })}
+              >
+                ↩ Start over
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Responsive two-column CSS */}
+      <style>{`
+        @media (min-width: 800px) {
+          #plan-result-grid { grid-template-columns: 320px 1fr !important; }
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes spin   { to { transform: rotate(360deg); } }
+      `}</style>
+
+      {/* Distribute Modal */}
+      {showDistributeModal && (
+        <DistributeModal
+          postText={postText}
+          generationId={generationId}
+          authToken={authToken}
+          onClose={() => setShowDistributeModal(false)}
+        />
+      )}
+    </div>
   );
 };
 

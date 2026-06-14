@@ -35,24 +35,60 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
     try {
       if (isLogin) {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
         if (signInError) throw signInError;
+
+        const token = data.session?.access_token;
+        let redirectTo = '/dashboard';
+        if (token) {
+          try {
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+            const res = await fetch(`${API_URL}/v1/onboarding/status`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (res.ok) {
+              const status = await res.json();
+              if (status && status.has_brand_dna === false) {
+                redirectTo = '/onboarding';
+              }
+            }
+          } catch (e) {
+            console.error('[AuthModal] Failed to query onboarding status:', e);
+          }
+        }
+
         onClose();
-        navigate('/dashboard');
+        navigate(redirectTo);
       } else {
-        const { error: signUpError } = await supabase.auth.signUp({
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+        const res = await fetch(`${API_URL}/v1/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            password,
+            name: name || email.split('@')[0],
+          }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || 'SYS_ERR: REGISTRATION_FAILED');
+        }
+
+        // Registration succeeded and user is auto-confirmed!
+        // Now sign them in immediately to get a session
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
-          options: {
-            data: { name: name || email.split('@')[0] },
-          },
         });
-        if (signUpError) throw signUpError;
+        if (signInError) throw signInError;
+
         onClose();
-        navigate('/dashboard');
+        navigate('/onboarding');
       }
     } catch (err: unknown) {
       const message =
