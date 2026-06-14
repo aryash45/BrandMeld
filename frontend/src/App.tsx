@@ -30,7 +30,7 @@ const DashboardPage    = React.lazy(() => import('./pages/DashboardPage'));   //
 const Content          = React.lazy(() => import('./pages/Content'));         // /create
 const PublishPage      = React.lazy(() => import('./pages/PublishPage'));
 const LearnPage        = React.lazy(() => import('./pages/LearnPage'));
-const SettingsPageNew  = React.lazy(() => import('./pages/SettingsPageNew'));
+const SettingsHub      = React.lazy(() => import('./pages/SettingsPageNew')); // full hub: Brand|Connections|Marketplace|Account
 const OnboardingWizard = React.lazy(() => import('./pages/onboarding/OnboardingWizard'));
 
 const PageLoader: React.FC = () => (
@@ -72,7 +72,7 @@ const App: React.FC = () => {
                 <Route path="/create"    element={<Content />} />
                 <Route path="/publish"   element={<PublishPage />} />
                 <Route path="/learn"     element={<LearnPage />} />
-                <Route path="/settings"  element={<SettingsPageNew />} />
+                <Route path="/settings"  element={<SettingsHub />} />
 
                 {/* ── Legacy redirects (keep old URLs working) ── */}
                 {/* Old home → Discover */}

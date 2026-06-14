@@ -182,13 +182,12 @@ export const editCampaignDraft = async (
  */
 export const onboardBrand = async (
   url: string,
-  userId?: string,
   authToken?: string,
 ): Promise<BrandDNA> => {
   const response = await fetch(`${API_BASE_URL}/v1/campaign/onboard`, {
     method: 'POST',
     headers: buildHeaders(authToken),
-    body: JSON.stringify({ url, user_id: userId }),
+    body: JSON.stringify({ url }),  // user_id derived server-side from JWT
   });
   if (!response.ok) {
     const msg = await extractErrorMessage(response, 'Onboarding failed');
@@ -311,3 +310,62 @@ export const checkBackendHealth = async (): Promise<boolean> => {
     return false;
   }
 };
+
+// ─── Social Media Connection APIs ─────────────────────────────────────────────
+
+export type SocialPlatform = 'linkedin' | 'twitter' | 'instagram';
+
+export interface ConnectedAccountStatus {
+  connected: boolean;
+  handle?: string;
+  note?: string;
+}
+
+export interface ConnectedAccountsResponse {
+  linkedin: ConnectedAccountStatus;
+  twitter: ConnectedAccountStatus;
+  instagram: ConnectedAccountStatus;
+}
+
+/** Fetch which platforms are connected for the authenticated user. */
+export const getConnectedAccounts = async (
+  authToken?: string,
+): Promise<ConnectedAccountsResponse> => {
+  const response = await fetch(`${API_BASE_URL}/v1/publish/connected`, {
+    headers: buildHeaders(authToken),
+  });
+  if (!response.ok) throw new Error('Failed to fetch connected accounts');
+  return response.json();
+};
+
+/** Start OAuth flow for a platform — returns the auth_url to redirect to. */
+export const getConnectUrl = async (
+  platform: SocialPlatform,
+  authToken?: string,
+): Promise<string> => {
+  const response = await fetch(`${API_BASE_URL}/v1/publish/connect/${platform}`, {
+    headers: buildHeaders(authToken),
+  });
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response, `Failed to start ${platform} OAuth`);
+    throw new Error(msg);
+  }
+  const data = await response.json();
+  return data.auth_url as string;
+};
+
+/** Disconnect (unlink) a social platform. */
+export const disconnectAccount = async (
+  platform: SocialPlatform,
+  authToken?: string,
+): Promise<void> => {
+  const response = await fetch(`${API_BASE_URL}/v1/publish/disconnect/${platform}`, {
+    method: 'DELETE',
+    headers: buildHeaders(authToken),
+  });
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response, `Failed to disconnect ${platform}`);
+    throw new Error(msg);
+  }
+};
+

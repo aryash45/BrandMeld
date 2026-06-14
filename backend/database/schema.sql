@@ -7,6 +7,17 @@
 -- ── Enable UUID extension (already enabled in Supabase) ──────────────────
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- OAuth CSRF state tokens (15-min TTL, one-time use)
+CREATE TABLE IF NOT EXISTS oauth_state (
+  state       TEXT PRIMARY KEY,
+  user_id     UUID NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+-- Auto-cleanup expired tokens
+CREATE INDEX IF NOT EXISTS idx_oauth_state_expires ON oauth_state(expires_at);
+
+
 -- ============================================================
 -- EXISTING TABLES (V1) — Ensure they exist with correct schema
 -- ============================================================
@@ -423,3 +434,50 @@ VALUES
     FALSE
   )
 ON CONFLICT DO NOTHING;
+
+-- ============================================================
+-- AUTOPILOT DRAFTS (v3 — single-thought generation)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS autopilot_drafts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  raw_input TEXT NOT NULL,
+  card_type TEXT NOT NULL CHECK (card_type IN ('happened', 'clicked', 'hard')),
+  signal JSONB NOT NULL,
+  generated_post TEXT NOT NULL,
+  authenticity_score INT DEFAULT 0 CHECK (authenticity_score >= 0 AND authenticity_score <= 100),
+  platform TEXT DEFAULT 'linkedin',
+  status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_autopilot_drafts_user_id
+  ON autopilot_drafts(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_autopilot_drafts_status
+  ON autopilot_drafts(user_id, status);
+
+ALTER TABLE autopilot_drafts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can manage their autopilot drafts"
+  ON autopilot_drafts;
+CREATE POLICY "Users can manage their autopilot drafts"
+  ON autopilot_drafts FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE OR REPLACE FUNCTION update_autopilot_drafts_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS autopilot_drafts_updated_at ON autopilot_drafts;
+CREATE TRIGGER autopilot_drafts_updated_at
+  BEFORE UPDATE ON autopilot_drafts
+  FOR EACH ROW EXECUTE FUNCTION update_autopilot_drafts_updated_at();
+
