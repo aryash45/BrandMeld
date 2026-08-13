@@ -30,8 +30,7 @@ from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.shared.rate_limit import limiter
 
 from app.core.llm import (
     generate_content_with_retry as _generate_content_with_retry,
@@ -45,7 +44,6 @@ from app.shared.deps import get_user_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/engine", tags=["autopilot"])
-limiter = Limiter(key_func=get_remote_address)
 
 # ── Default voice (used when no brand_dna exists for the user) ────────────────
 

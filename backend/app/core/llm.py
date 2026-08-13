@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import base64
+import random
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -167,7 +168,7 @@ async def generate_content_with_retry(
 
     for attempt, delay in enumerate((0.0, *LLM_RETRY_DELAYS), start=1):
         if delay:
-            await asyncio.sleep(delay)
+            await asyncio.sleep(delay + random.uniform(0, delay * 0.25))
         try:
             return await asyncio.to_thread(
                 client.models.generate_content,
