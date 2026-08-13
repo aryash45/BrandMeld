@@ -56,6 +56,7 @@ async def fork_voice(voice_id: str, req: ForkRequest, request: Request):
 
 
 class RateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     rating: int = Field(ge=1, le=5)
     comment: Optional[str] = Field(default=None, max_length=500)
 
@@ -67,6 +68,9 @@ async def rate_voice(voice_id: str, req: RateRequest, request: Request):
     sb = get_supabase_client()
     if not sb:
         return {"success": True, "note": "Rating not persisted (DB not configured)"}
+    voice = sb.table("voice_marketplace_entries").select("id").eq("id", voice_id).eq("is_public", True).maybe_single().execute()
+    if not voice.data:
+        raise HTTPException(status_code=404, detail="Voice not found")
     if req.comment:
         sb.table("voice_marketplace_comments").insert({
             "voice_entry_id": voice_id,

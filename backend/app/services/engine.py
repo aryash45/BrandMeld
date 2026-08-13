@@ -31,14 +31,13 @@ import socket
 from html import unescape
 from typing import Annotated
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.shared.rate_limit import limiter
 from app.shared.deps import get_user_id
 
 # Use shared LLM infrastructure instead of duplicating it
@@ -62,7 +61,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # P1-7: Rate limiter — same instance as in main.py (shared via import)
-limiter = Limiter(key_func=get_remote_address)
 
 DEFAULT_PLATFORMS = ["twitter", "linkedin", "newsletter"]
 
@@ -271,9 +269,26 @@ async def _capture_screenshot(url: str) -> bytes | None:
             browser = await p.chromium.launch(headless=True)
             try:
                 page = await browser.new_page(viewport={"width": 1440, "height": 2200})
+                allowed_host = urlparse(url).hostname
+
+                async def guard_route(route):
+                    target = route.request.url
+                    parsed = urlparse(target)
+                    if parsed.scheme not in {"http", "https"} or parsed.hostname != allowed_host:
+                        await route.abort()
+                        return
+                    try:
+                        _enforce_public_url(parsed)
+                    except ValueError:
+                        await route.abort()
+                        return
+                    await route.continue_()
+
+                await page.route("**/*", guard_route)
                 await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
                 await page.wait_for_timeout(1500)
-                return await page.screenshot(full_page=True)
+                screenshot = await page.screenshot(full_page=True)
+                return screenshot if len(screenshot) <= 8 * 1024 * 1024 else None
             finally:
                 await browser.close()
     except Exception as exc:
@@ -296,22 +311,33 @@ def _extract_meta(html: str, name: str) -> str | None:
 
 
 def _fetch_page_context(url: str) -> str | None:
-    req = Request(
-        url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/133.0.0.0 Safari/537.36"
-            )
-        },
-    )
+    class NoRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = build_opener(NoRedirects())
+    current_url = url
     try:
-        with urlopen(req, timeout=15) as resp:
-            ct = (resp.headers.get("Content-Type") or "").lower()
-            if ct and "text/html" not in ct and "application/xhtml+xml" not in ct:
-                return None
-            html_bytes = resp.read(250_000)
+        for _ in range(3):
+            parsed = urlparse(current_url)
+            _enforce_public_url(parsed)
+            req = Request(current_url, headers={"User-Agent": "BrandMeldFetcher/1.0"})
+            try:
+                resp = opener.open(req, timeout=15)
+            except HTTPError as redirect:
+                location = redirect.headers.get("Location")
+                if redirect.code not in {301, 302, 303, 307, 308} or not location:
+                    raise
+                current_url = urljoin(current_url, location)
+                continue
+            with resp:
+                ct = (resp.headers.get("Content-Type") or "").lower()
+                if ct and "text/html" not in ct and "application/xhtml+xml" not in ct:
+                    return None
+                html_bytes = resp.read(250_000)
+                break
+        else:
+            return None
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         logger.warning("Page fetch failed for %s: %s", url, exc)
         return None
@@ -691,8 +717,18 @@ async def launch_campaign(req: CampaignLaunchRequest, request: Request):
             _generate_for_platform(voice, req.content_request, p)
             for p in valid_platforms
         ]
-        results_list = await asyncio.gather(*tasks)
-        results = dict(results_list)
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        results = {}
+        failures = {}
+        for platform, result in zip(valid_platforms, results_list):
+            if isinstance(result, Exception):
+                failures[platform] = "Generation failed for this platform"
+                logger.warning("Platform generation failed user=%s platform=%s error=%s", user_id, platform, type(result).__name__)
+            else:
+                _, content = result
+                results[platform] = content
+        if not results:
+            raise HTTPException(status_code=503, detail="Campaign generation failed for all platforms.")
     except Exception as exc:
         # P1-6: Log full details server-side; return generic message to client
         logger.error("Campaign generation failed for user %s: %s", user_id, exc, exc_info=True)
@@ -701,7 +737,8 @@ async def launch_campaign(req: CampaignLaunchRequest, request: Request):
     return CampaignLaunchResponse(
         results=results,
         success=True,
-        message=f"Campaign generated for: {', '.join(valid_platforms)}",
+        message=(f"Campaign generated for: {', '.join(results)}" +
+                 (f"; failed: {', '.join(failures)}" if failures else "")),
     )
 
 

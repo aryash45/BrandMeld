@@ -74,7 +74,7 @@ async def answer_prompt(prompt_id: str, req: AnswerPromptRequest, request: Reque
             campaign_id = camp_r.data[0]["id"]
             sb.table("weekly_prompts").update(
                 {"created_campaign_id": campaign_id}
-            ).eq("id", prompt_id).execute()
+            ).eq("id", prompt_id).eq("user_id", user_id).execute()
 
     return {
         "prompt_id": prompt_id,

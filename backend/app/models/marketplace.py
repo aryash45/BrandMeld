@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class VoiceMarketplaceEntry(BaseModel):
@@ -36,7 +36,8 @@ class VoiceCard(BaseModel):
 
 
 class ForkRequest(BaseModel):
-    customizations: Optional[dict] = None  # {voice_personality: "...", etc.}
+    model_config = ConfigDict(extra="forbid")
+    customizations: Optional[dict[str, str]] = Field(default=None, max_length=8)
 
 
 class ForkResponse(BaseModel):
@@ -72,6 +73,7 @@ class WeeklyPrompt(BaseModel):
 
 
 class AnswerPromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     answer_text: str = Field(min_length=1, max_length=2000)
     generate_campaign: bool = True
 

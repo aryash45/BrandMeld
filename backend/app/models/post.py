@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class PublishedPost(BaseModel):
@@ -32,9 +32,10 @@ class EngagementMetric(BaseModel):
 
 
 class PublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     campaign_id: str
-    content: dict[str, str]  # {platform: draft_text}
-    platforms: list[str]
+    content: dict[str, str] = Field(max_length=4)  # {platform: draft_text}
+    platforms: list[str] = Field(min_length=1, max_length=4)
     schedule_at: Optional[datetime] = None
 
 
