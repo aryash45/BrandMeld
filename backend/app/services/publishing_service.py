@@ -65,15 +65,15 @@ def encrypt_token(plain: str) -> str:
 
 
 def decrypt_token(cipher: str) -> str:
-    """Decrypt OAuth token from DB. Returns as-is if key unset."""
+    """Decrypt OAuth token from DB; fail closed on key/configuration errors."""
     f = _fernet()
     if not f:
-        return cipher
+        raise RuntimeError("ENCRYPTION_KEY is not configured")
     try:
         return f.decrypt(cipher.encode()).decode()
-    except Exception:
-        logger.warning("Token decryption failed — returning raw value")
-        return cipher
+    except Exception as exc:
+        logger.error("Token decryption failed: %s", type(exc).__name__)
+        raise RuntimeError("Stored OAuth token cannot be decrypted") from exc
 
 
 # ── Supabase helpers ───────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ async def _get_connected_account(user_id: str, platform: str) -> Optional[dict]:
         return None
     result = (
         sb.table("connected_accounts")
-        .select("*")
+        .select("access_token, refresh_token, token_expires_at, platform_user_id, account_identifier")
         .eq("user_id", user_id)
         .eq("platform", platform)
         .maybe_single()
@@ -153,11 +153,11 @@ async def publish_to_linkedin(
         )
         return db_id, None
     except Exception as exc:
-        logger.error("LinkedIn publish failed for user %s: %s", user_id, exc)
+        logger.error("LinkedIn publish failed user=%s error=%s", user_id, type(exc).__name__)
         db_id = await _save_published_post(
             user_id, campaign_id, "linkedin", draft, None, "failed", str(exc)
         )
-        return db_id, str(exc)
+        return db_id, "LinkedIn publishing failed. Please reconnect and try again."
 
 
 def get_twitter_intent(draft: str) -> str:

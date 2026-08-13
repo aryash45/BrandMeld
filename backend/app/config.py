@@ -63,11 +63,23 @@ class Settings:
 
     # ── App ───────────────────────────────────────────────────────────────
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    environment: str = os.getenv("ENVIRONMENT", "development")
+    environment: str = os.getenv("ENVIRONMENT", "development").strip().lower()
 
     @property
     def is_production(self) -> bool:
-        return self.environment == "production"
+        return self.environment in {"production", "prod"}
+
+    def validate_production(self) -> None:
+        required = {
+            "SUPABASE_URL": self.supabase_url,
+            "SUPABASE_SERVICE_ROLE_KEY": self.supabase_service_role_key,
+            "ENCRYPTION_KEY": self.encryption_key,
+        }
+        if not self.supabase_jwt_secret and not self.supabase_anon_key:
+            required["SUPABASE_JWT_SECRET or SUPABASE_ANON_KEY"] = ""
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise RuntimeError("Missing production configuration: " + ", ".join(missing))
 
 
 @lru_cache(maxsize=1)

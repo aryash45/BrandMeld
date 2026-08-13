@@ -17,6 +17,15 @@ CREATE TABLE IF NOT EXISTS oauth_state (
 -- Auto-cleanup expired tokens
 CREATE INDEX IF NOT EXISTS idx_oauth_state_expires ON oauth_state(expires_at);
 
+CREATE OR REPLACE FUNCTION consume_oauth_state(input_state TEXT)
+RETURNS TABLE(user_id UUID)
+LANGUAGE sql SECURITY DEFINER
+AS $$
+  DELETE FROM oauth_state
+  WHERE state = input_state AND expires_at > NOW()
+  RETURNING user_id;
+$$;
+
 
 -- ============================================================
 -- EXISTING TABLES (V1) — Ensure they exist with correct schema
@@ -200,6 +209,9 @@ CREATE TABLE IF NOT EXISTS voice_marketplace_comments (
   rating INT CHECK (rating >= 1 AND rating <= 5),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_comments_user_voice
+  ON voice_marketplace_comments(voice_entry_id, user_id);
 
 -- Campaign angle templates (also seeded in marketplace_service.py)
 CREATE TABLE IF NOT EXISTS campaign_angle_templates (
@@ -480,4 +492,3 @@ DROP TRIGGER IF EXISTS autopilot_drafts_updated_at ON autopilot_drafts;
 CREATE TRIGGER autopilot_drafts_updated_at
   BEFORE UPDATE ON autopilot_drafts
   FOR EACH ROW EXECUTE FUNCTION update_autopilot_drafts_updated_at();
-

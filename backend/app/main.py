@@ -47,21 +47,22 @@ from app.routers.prompts import router as prompts_router
 from app.routers.settings import settings_router, onboarding_router, score_router
 from app.routers.autopilot import router as autopilot_router
 from app.shared.deps import get_user_id
+from app.shared.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
 # ── Rate limiter (P1-7) ───────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address)
 
 # ── JWT config ────────────────────────────────────────────────────────────────
 # Routes that don't require a valid JWT
 _PUBLIC_PATHS = {
     "/health",
+    "/ready",
     "/docs",
     "/openapi.json",
     "/redoc",
     "/v1/auth/linkedin/callback",  # OAuth callback must be public
-    "/v1/auth/register",           # Bypass email rate limits for register
+    "/v1/auth/register",
 }
 
 
@@ -73,6 +74,13 @@ app = FastAPI(
     ),
     version="2.0.0",
 )
+
+@app.on_event("startup")
+async def validate_startup_configuration() -> None:
+    from app.config import get_settings
+    settings = get_settings()
+    if settings.is_production:
+        settings.validate_production()
 
 # Attach rate limiter to app state
 app.state.limiter = limiter
@@ -196,26 +204,10 @@ async def jwt_auth_middleware(request: Request, call_next):
     jwt_secret = _get_supabase_jwt_secret()
     auth_client = _get_supabase_auth_client()
 
-    # P0-1: If neither verifier is configured, hard-fail in production
+    # Authentication is never disabled. Misconfiguration is an unavailable service.
     if not jwt_secret and auth_client is None:
-        from app.config import get_settings
-        settings = get_settings()
-        if settings.is_production:
-            logger.critical(
-                "SUPABASE_JWT_SECRET and SUPABASE_ANON_KEY are not configured in production. "
-                "All requests are being rejected to prevent unauthorized access."
-            )
-            return JSONResponse(
-                status_code=503,
-                content={"detail": "Service is not properly configured. Contact support."},
-            )
-        # Dev-only fallback — never reaches production
-        logger.warning(
-            "No Supabase token verifier configured — auth middleware is DISABLED. "
-            "Set SUPABASE_JWT_SECRET for production."
-        )
-        request.state.user_id = "dev-user"
-        return await call_next(request)
+        logger.critical("No Supabase token verifier is configured")
+        return JSONResponse(status_code=503, content={"detail": "Authentication service unavailable."})
 
     cors_headers = _build_cors_headers(request)
 
@@ -305,34 +297,29 @@ class RegisterRequest(BaseModel):
     name: str | None = None
 
 @app.post("/v1/auth/register", tags=["auth"])
-async def register(req: RegisterRequest):
+@limiter.limit("3/minute")
+async def register(req: RegisterRequest, request: Request):
     """
     Register a user directly using admin access to auto-confirm email.
     Bypasses Supabase email rate limits and verification step for developer/testing convenience.
     """
     from fastapi import HTTPException
-    from app.shared.db import get_supabase_client
-    db = get_supabase_client()
-    if db is None:
+    auth_client = _get_supabase_auth_client()
+    if auth_client is None:
         raise HTTPException(status_code=503, detail="Database client not configured")
     try:
         attrs = {
             "email": req.email,
             "password": req.password,
-            "email_confirm": True,
-            "user_metadata": {"name": req.name or req.email.split("@")[0]}
+            "options": {"data": {"name": req.name or req.email.split("@")[0]}},
         }
-        # Run in thread pool to avoid blocking async event loop
-        user_response = await asyncio.to_thread(db.auth.admin.create_user, attrs)
+        user_response = await asyncio.to_thread(auth_client.sign_up, attrs)
         if not user_response or not getattr(user_response, "user", None):
-            raise HTTPException(status_code=400, detail="Failed to register user via admin API")
+            raise HTTPException(status_code=400, detail="Registration could not be completed.")
         return {"status": "success", "user_id": str(user_response.user.id)}
     except Exception as exc:
-        logger.error("Admin user registration failed: %s", exc)
-        err_msg = str(exc)
-        if "already exists" in err_msg.lower() or "registered" in err_msg.lower():
-            raise HTTPException(status_code=400, detail="User is already registered in the system.")
-        raise HTTPException(status_code=400, detail=f"Registration failed: {err_msg}")
+        logger.warning("User registration failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Registration could not be completed.") from exc
 
 class ImagenRequest(BaseModel):
     brand_colors: list[str]
@@ -354,6 +341,17 @@ async def generate_image(req: ImagenRequest):
 @app.get("/health", tags=["meta"])
 async def health():
     return {"status": "healthy", "version": "2.0.0"}
+
+@app.get("/ready", tags=["meta"])
+async def readiness():
+    from app.config import get_settings
+    settings = get_settings()
+    try:
+        if settings.is_production:
+            settings.validate_production()
+        return {"status": "ready"}
+    except RuntimeError:
+        return JSONResponse(status_code=503, content={"status": "not_ready"})
 
 
 # ── /v1/discovery shim — keeps useBrandKit + fetchBrandDNA working ────────────
