@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
 def get_supabase_client():
     """
     Return a Supabase client (with service role key) or None if env vars are missing.

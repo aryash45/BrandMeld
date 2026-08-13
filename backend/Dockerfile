@@ -41,6 +41,7 @@ COPY app/ ./app/
 
 # Expose port (Cloud Run uses PORT environment variable)
 ENV PORT=8080
+ENV ENVIRONMENT=production
 EXPOSE 8080
 
 # Health check — use curl instead of requests (lighter, already available)

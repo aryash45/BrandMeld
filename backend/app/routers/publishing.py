@@ -29,7 +29,7 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.post import PublishRequest, PublishResponse
 from app.services import publishing_service
@@ -53,8 +53,10 @@ _VALID_PLATFORMS = {"linkedin", "twitter", "instagram"}
 # ── OAuth state token helpers (P0-2, P1-5) ────────────────────────────────────
 
 def _get_state_secret() -> bytes:
-    """HMAC signing key for OAuth state tokens. Falls back to a derived key."""
-    raw = os.getenv("STATE_SECRET", "") or os.getenv("SUPABASE_JWT_SECRET", "") or "dev-state-key"
+    """Legacy helper retained for compatibility; production requires a DB nonce."""
+    raw = os.getenv("STATE_SECRET", "")
+    if not raw:
+        raise RuntimeError("STATE_SECRET is not configured")
     return raw.encode()
 
 
@@ -63,10 +65,7 @@ def _build_state_token(user_id: str) -> str:
     Encode user_id into a signed state token.
     Format: base64url(json_payload).base64url(hmac_signature)
     """
-    payload = json.dumps({"uid": user_id}).encode()
-    sig = hmac.new(_get_state_secret(), payload, hashlib.sha256).digest()
-    token = base64.urlsafe_b64encode(payload).rstrip(b"=") + b"." + base64.urlsafe_b64encode(sig).rstrip(b"=")
-    return token.decode()
+    return secrets.token_urlsafe(32)
 
 
 def _verify_state_token(token: str) -> str:
@@ -102,7 +101,9 @@ def _save_oauth_state(state: str, user_id: str) -> None:
     """Store state in Supabase with 15-minute TTL for CSRF verification (P1-5)."""
     sb = get_supabase_client()
     if not sb:
-        return  # Dev mode — no DB
+        if get_settings().is_production:
+            raise RuntimeError("OAuth state storage is unavailable")
+        return
     expiry = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
     try:
         sb.table("oauth_state").upsert({
@@ -111,7 +112,9 @@ def _save_oauth_state(state: str, user_id: str) -> None:
             "expires_at": expiry,
         }).execute()
     except Exception as exc:
-        logger.warning("Failed to persist OAuth state (non-fatal in dev): %s", exc)
+        logger.error("Failed to persist OAuth state: %s", type(exc).__name__)
+        if get_settings().is_production:
+            raise RuntimeError("OAuth state storage is unavailable") from exc
 
 
 def _consume_oauth_state(state: str) -> Optional[str]:
@@ -121,31 +124,14 @@ def _consume_oauth_state(state: str) -> Optional[str]:
     """
     sb = get_supabase_client()
     if not sb:
-        # Dev mode: verify using HMAC token directly
-        return None  # Caller falls back to HMAC verification
+        return None
     try:
-        r = (
-            sb.table("oauth_state")
-            .select("user_id, expires_at")
-            .eq("state", state)
-            .maybe_single()
-            .execute()
-        )
-        if not r.data:
-            return None
-        # Check expiry
-        expiry_str = r.data.get("expires_at", "")
-        if expiry_str:
-            expiry = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) > expiry:
-                logger.warning("OAuth state token expired")
-                return None
-        user_id = r.data.get("user_id")
-        # Delete after use (one-time use token)
-        sb.table("oauth_state").delete().eq("state", state).execute()
-        return user_id
+        rpc = sb.rpc("consume_oauth_state", {"input_state": state}).execute()
+        if rpc.data:
+            return rpc.data[0].get("user_id")
+        return None
     except Exception as exc:
-        logger.warning("OAuth state DB lookup failed: %s", exc)
+        logger.error("OAuth state consumption failed: %s", type(exc).__name__)
         return None
 
 
@@ -164,9 +150,18 @@ async def publish_content(req: PublishRequest, request: Request):
 
 class ScheduleRequest(BaseModel):
     campaign_id: str
-    content: dict[str, str]
-    platforms: list[str]
+    content: dict[str, str] = Field(max_length=4)
+    platforms: list[str] = Field(min_length=1, max_length=4)
     schedule_at: datetime
+
+    @field_validator("schedule_at")
+    @classmethod
+    def validate_schedule_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("schedule_at must include a timezone")
+        if value <= datetime.now(timezone.utc):
+            raise ValueError("schedule_at must be in the future")
+        return value
 
 
 @router.post("/schedule", response_model=PublishResponse)
@@ -176,6 +171,17 @@ async def schedule_post(req: ScheduleRequest, request: Request):
     sb = get_supabase_client()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not configured")
+
+    campaign = (
+        sb.table("campaigns")
+        .select("id")
+        .eq("id", req.campaign_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not campaign.data:
+        raise HTTPException(status_code=404, detail="Campaign not found")
 
     ids: dict[str, str] = {}
     for platform in req.platforms:
@@ -267,14 +273,7 @@ async def linkedin_callback(code: str, state: str, request: Request):
         user_id = _consume_oauth_state(state)
 
         if user_id is None:
-            # DB unavailable in dev — fall back to HMAC verification
-            try:
-                user_id = _verify_state_token(state)
-            except ValueError as exc:
-                logger.warning("OAuth state verification failed: %s", exc)
-                return RedirectResponse(
-                    url=f"{s.frontend_url}/settings?error=invalid_state"
-                )
+            return RedirectResponse(url=f"{s.frontend_url}/settings?error=invalid_state")
 
         if not user_id:
             logger.warning("OAuth callback: could not determine user_id from state")
@@ -308,7 +307,7 @@ async def linkedin_callback(code: str, state: str, request: Request):
             url=f"{s.frontend_url}/settings?connected=linkedin"
         )
     except Exception as exc:
-        logger.error("LinkedIn callback error: %s", exc)
+        logger.warning("LinkedIn callback error: %s", type(exc).__name__)
         return RedirectResponse(
             url=f"{s.frontend_url}/settings?error=linkedin_failed"
         )
