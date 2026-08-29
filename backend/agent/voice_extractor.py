@@ -1,123 +1,127 @@
 """
 agent/voice_extractor.py — Founder voice signature extraction.
 
-Takes a list of raw text samples written by a founder and returns a structured
-VoiceProfile by calling the NVIDIA NIM API.
+Analyzes raw writing samples → structured VoiceProfile with 11 authenticity markers.
 
 Usage:
-    from agent.voice_extractor import extract_voice, extract_voice_sync
+    extractor = VoiceExtractor()
 
-    # Async (preferred in async contexts)
-    profile = await extract_voice(posts=["I shipped v2 today...", "Hot take: ..."])
+    # Async
+    profile = await extractor.extract(posts=["post 1...", "post 2..."])
 
-    # Sync (for CLI scripts)
-    profile = extract_voice_sync(posts=["..."])
+    # Sync (CLI)
+    profile = extractor.extract_sync(posts=["..."])
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import sys
 import os
+import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.models import VoiceProfile
 
 logger = logging.getLogger(__name__)
 
 
 def _get_llm():
-    """Lazy import so the agent module is importable without NVIDIA_API_KEY set."""
-    # Resolve the backend/ root so we can import app.core.llm regardless of cwd
     backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if backend_root not in sys.path:
         sys.path.insert(0, backend_root)
-
-    from app.core.llm import (
-        get_llm_client,
-        GenerateContentConfig,
-        generate_content_with_retry,
-    )
+    from app.core.llm import get_llm_client, GenerateContentConfig, generate_content_with_retry
     return get_llm_client, GenerateContentConfig, generate_content_with_retry
 
 
-def _build_extraction_prompt(posts: list[str]) -> str:
-    """Format raw post samples into the LLM prompt."""
-    numbered = "\n\n".join(
-        f"[SAMPLE {i + 1}]\n{post.strip()}" for i, post in enumerate(posts)
-    )
-    return (
-        "Analyze the following writing samples from a single founder/creator.\n"
-        "Extract their unique voice signature and return it as JSON matching this schema:\n\n"
-        "{\n"
-        '  "tone": "string",\n'
-        '  "vocabulary_style": "string",\n'
-        '  "sentence_structure": "string",\n'
-        '  "recurring_themes": ["string", ...],\n'
-        '  "banned_phrases": ["string", ...],\n'
-        '  "signature_phrases": ["string", ...],\n'
-        '  "pov_summary": "string"\n'
-        "}\n\n"
-        "WRITING SAMPLES:\n"
-        f"{numbered}"
-    )
-
-
-async def extract_voice(posts: list[str]) -> "VoiceProfile":  # noqa: F821
+class VoiceExtractor:
     """
-    Async: Analyze raw founder posts and return a VoiceProfile.
+    Extracts a founder's unique voice signature from raw writing samples.
 
-    Args:
-        posts: List of raw text samples (tweets, LinkedIn posts, blog excerpts, etc.)
-               Minimum 3 samples recommended for accurate extraction.
-
-    Returns:
-        VoiceProfile — structured voice signature.
-
-    Raises:
-        ValueError: If no posts provided.
-        RuntimeError: If the LLM call fails after retries.
+    Produces a VoiceProfile with 11 authenticity markers that are:
+    - Specific (never "professional" or "passionate")
+    - Evidence-based (grounded in actual sample text)
+    - Actionable (generators and validators can use them)
     """
-    from agent.models import VoiceProfile
-    from agent.prompts import VOICE_EXTRACTOR_SYSTEM
-    from app.core.llm import clean_json_text
 
-    if not posts:
-        raise ValueError("At least one writing sample is required for voice extraction.")
+    def _build_user_message(self, posts: list[str]) -> str:
+        """Format raw posts into the extraction prompt."""
+        from agent.prompts import VOICE_EXTRACTION_USER_TEMPLATE
+        numbered = "\n\n".join(
+            f"[SAMPLE {i + 1}]\n{post.strip()}" for i, post in enumerate(posts)
+        )
+        return VOICE_EXTRACTION_USER_TEMPLATE.format(samples=numbered)
 
-    get_llm_client, GenerateContentConfig, generate_content_with_retry = _get_llm()
+    async def extract(self, posts: list[str]) -> "VoiceProfile":
+        """
+        Async: Extract VoiceProfile from raw writing samples.
 
-    client = get_llm_client()
-    prompt = _build_extraction_prompt(posts)
+        Args:
+            posts: 3–10 raw text samples. More samples → more accurate extraction.
 
-    logger.info("Extracting voice from %d writing samples…", len(posts))
+        Returns:
+            VoiceProfile with 11 authenticity markers.
 
-    response = await generate_content_with_retry(
-        client=client,
-        contents=prompt,
-        config=GenerateContentConfig(
-            system_instruction=VOICE_EXTRACTOR_SYSTEM,
-            response_mime_type="application/json",
-            response_schema=VoiceProfile,
-            temperature=0.3,  # low temp for consistent, evidence-based extraction
-        ),
-    )
+        Raises:
+            ValueError: fewer than 1 post provided.
+            RuntimeError: LLM call fails after retries.
+        """
+        from agent.models import VoiceProfile
+        from agent.prompts import VOICE_EXTRACTION_SYSTEM
+        from app.core.llm import clean_json_text
 
-    # Prefer structured parse; fall back to manual JSON decode
-    if response.parsed is not None:
-        return response.parsed
+        if not posts:
+            raise ValueError("At least one writing sample is required.")
+        if len(posts) < 3:
+            logger.warning(
+                "Only %d sample(s) provided. 5+ recommended for accurate extraction.",
+                len(posts),
+            )
 
-    raw_text = clean_json_text(response.text or "{}")
-    data = json.loads(raw_text)
-    return VoiceProfile(**data)
+        get_llm_client, GenerateContentConfig, generate_content_with_retry = _get_llm()
+        client = get_llm_client()
+
+        logger.info("Extracting voice signature from %d writing samples…", len(posts))
+
+        response = await generate_content_with_retry(
+            client=client,
+            contents=self._build_user_message(posts),
+            config=GenerateContentConfig(
+                system_instruction=VOICE_EXTRACTION_SYSTEM,
+                response_mime_type="application/json",
+                response_schema=VoiceProfile,
+                temperature=0.3,
+            ),
+        )
+
+        if response.parsed is not None:
+            profile = response.parsed
+        else:
+            raw = clean_json_text(response.text or "{}")
+            profile = VoiceProfile(**json.loads(raw))
+
+        logger.info(
+            "Voice extracted — authenticity: %.1f/10 | signature phrases: %d | "
+            "vulnerability: %.1f/10",
+            profile.authenticity_score,
+            len(profile.signature_phrases),
+            profile.vulnerability_level,
+        )
+        return profile
+
+    def extract_sync(self, posts: list[str]) -> "VoiceProfile":
+        """Sync wrapper — for use in CLI scripts."""
+        return asyncio.run(self.extract(posts))
 
 
-def extract_voice_sync(posts: list[str]) -> "VoiceProfile":  # noqa: F821
-    """
-    Sync wrapper around extract_voice — for use in CLI scripts.
+# ─── Module-level convenience functions (backward compat) ─────────────────────
 
-    Args:
-        posts: List of raw text samples.
+def extract_voice_sync(posts: list[str]) -> "VoiceProfile":
+    """Convenience wrapper around VoiceExtractor for existing callers."""
+    return VoiceExtractor().extract_sync(posts)
 
-    Returns:
-        VoiceProfile
-    """
-    return asyncio.run(extract_voice(posts))
+
+async def extract_voice(posts: list[str]) -> "VoiceProfile":
+    """Convenience wrapper around VoiceExtractor for existing callers."""
+    return await VoiceExtractor().extract(posts)

@@ -1,186 +1,294 @@
 """
-agent/content_generator.py — Multi-platform content generation.
+agent/content_generator.py — Multi-platform content generation with validation loop.
 
-Takes a VoiceProfile + topic and generates platform-specific content in parallel.
-Includes an internal self-correction pass (transparent to the caller).
+Process per platform:
+    1. Generate initial draft
+    2. Validate against quality gate (buzzwords + specificity + LLM auth score)
+    3. If score < 7, regenerate with stricter prompt (max 2 attempts)
+    4. Return GeneratedPlatformContent with embedded ValidationResult
 
 Usage:
-    from agent.content_generator import generate_content, generate_content_sync
-    from agent.models import VoiceProfile
+    generator = ContentGenerator()
 
-    bundle = await generate_content(
+    bundle = await generator.generate(
         voice=profile,
-        topic="We just shipped async exports — took 3 weeks to get right.",
-        platforms=["twitter", "linkedin", "newsletter"],
+        topic="We just shipped async exports after 3 weeks of work.",
+        platforms=["linkedin", "twitter", "newsletter"],
     )
     bundle.print_summary()
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.models import VoiceProfile, ContentBundle, GeneratedPlatformContent
 
 logger = logging.getLogger(__name__)
 
 
 def _get_llm():
-    """Lazy import — keeps agent importable without env vars set."""
     backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if backend_root not in sys.path:
         sys.path.insert(0, backend_root)
-
-    from app.core.llm import (
-        get_llm_client,
-        GenerateContentConfig,
-        generate_content_with_retry,
-    )
+    from app.core.llm import get_llm_client, GenerateContentConfig, generate_content_with_retry
     return get_llm_client, GenerateContentConfig, generate_content_with_retry
 
 
-def _build_generation_prompt(voice_str: str, topic: str, platform: str) -> str:
-    """Compose the per-platform generation prompt."""
-    from agent.prompts import PLATFORM_CONSTRAINTS
-    constraints = PLATFORM_CONSTRAINTS.get(platform, "Write appropriate content for this platform.")
-    return (
-        f"[BRAND_VOICE]\n"
-        f"---\n{voice_str}\n---\n\n"
-        f"[CONTENT TOPIC]\n"
-        f"---\n{topic}\n---\n\n"
-        f"[PLATFORM REQUIREMENTS — FOLLOW STRICTLY]\n"
-        f"---\n{constraints}\n---"
-    )
-
-
-def _build_audit_prompt(draft: str, voice_str: str) -> str:
-    """Prompt for the internal self-correction pass."""
-    return f"[VOICE PROFILE]\n{voice_str}\n\n[DRAFT]\n{draft}"
-
-
-async def _self_correct(draft: str, voice_str: str) -> tuple[str, bool]:
+class ContentGenerator:
     """
-    Internal audit pass: rewrite only off-brand sentences.
-
-    Returns:
-        (corrected_draft, was_changed)
+    Generates platform-native content in a founder's voice, with a validation
+    loop that catches and regenerates slop before it reaches the output.
     """
-    from agent.prompts import AUDITOR_SYSTEM
 
-    get_llm_client, GenerateContentConfig, generate_content_with_retry = _get_llm()
-    client = get_llm_client()
+    def _build_prompt(self, voice_str: str, topic: str, platform: str) -> str:
+        """Select the right per-platform prompt template and fill it in."""
+        from agent.prompts import (
+            LINKEDIN_PROMPT_TEMPLATE,
+            TWITTER_PROMPT_TEMPLATE,
+            NEWSLETTER_PROMPT_TEMPLATE,
+            GENERATOR_SYSTEM,  # noqa — used via config
+        )
+        from agent.config import BUZZWORD_BLACKLIST
 
-    resp = await generate_content_with_retry(
-        client=client,
-        contents=_build_audit_prompt(draft, voice_str),
-        config=GenerateContentConfig(
-            system_instruction=AUDITOR_SYSTEM,
-            temperature=0.4,
-            top_p=0.9,
-        ),
-    )
-    corrected = (resp.text or "").strip() or draft
-    return corrected, (corrected != draft)
+        buzzwords_short = ", ".join(BUZZWORD_BLACKLIST[:12]) + "..."
 
+        templates = {
+            "linkedin": LINKEDIN_PROMPT_TEMPLATE,
+            "twitter": TWITTER_PROMPT_TEMPLATE,
+            "newsletter": NEWSLETTER_PROMPT_TEMPLATE,
+        }
+        template = templates.get(platform, LINKEDIN_PROMPT_TEMPLATE)
+        return template.format(voice_profile=voice_str, topic=topic)
 
-async def _generate_for_platform(
-    voice_str: str,
-    topic: str,
-    platform: str,
-) -> tuple[str, str, bool]:
-    """
-    Generate + self-correct content for a single platform.
+    def _build_stricter_prompt(
+        self,
+        voice_str: str,
+        topic: str,
+        platform: str,
+        profile: "VoiceProfile",
+    ) -> str:
+        """Stricter regeneration prompt when the first attempt scored < 7."""
+        from agent.prompts import STRICTER_GENERATOR_SUFFIX
+        base = self._build_prompt(voice_str, topic, platform)
+        phrases_str = ", ".join(f'"{p}"' for p in profile.signature_phrases[:4])
+        suffix = STRICTER_GENERATOR_SUFFIX.format(
+            signature_phrases=phrases_str,
+            example_voice_sample=profile.example_voice_sample,
+        )
+        return base + suffix
 
-    Returns:
-        (platform, content, self_corrected)
-    """
-    from agent.prompts import GENERATOR_SYSTEM
+    async def _generate_raw(
+        self,
+        voice_str: str,
+        topic: str,
+        platform: str,
+        stricter: bool = False,
+        profile: "VoiceProfile | None" = None,
+    ) -> str:
+        """Single LLM generation call. Returns raw text."""
+        from agent.prompts import GENERATOR_SYSTEM
+        from agent.config import BUZZWORD_BLACKLIST
 
-    get_llm_client, GenerateContentConfig, generate_content_with_retry = _get_llm()
-    client = get_llm_client()
+        buzzwords_short = ", ".join(BUZZWORD_BLACKLIST[:12]) + "..."
+        system = GENERATOR_SYSTEM.format(buzzwords=buzzwords_short)
 
-    prompt = _build_generation_prompt(voice_str, topic, platform)
-
-    logger.info("Generating %s content…", platform)
-    resp = await generate_content_with_retry(
-        client=client,
-        contents=prompt,
-        config=GenerateContentConfig(
-            system_instruction=GENERATOR_SYSTEM,
-            temperature=0.8,
-            top_p=0.95,
-        ),
-    )
-    draft = (resp.text or "").strip()
-
-    # Internal audit pass — transparent to caller
-    corrected, changed = await _self_correct(draft, voice_str)
-    return platform, corrected, changed
-
-
-async def generate_content(
-    voice: "VoiceProfile",  # noqa: F821
-    topic: str,
-    platforms: list[str] | None = None,
-) -> "ContentBundle":  # noqa: F821
-    """
-    Async: Generate multi-platform content for a given topic in the founder's voice.
-
-    Args:
-        voice:     VoiceProfile extracted by voice_extractor.extract_voice()
-        topic:     The subject/update to create content about
-        platforms: List of target platforms. Defaults to ["twitter", "linkedin", "newsletter"]
-
-    Returns:
-        ContentBundle with per-platform results and any errors.
-    """
-    from agent.models import ContentBundle, GeneratedContent
-    from agent.prompts import PLATFORM_CONSTRAINTS
-
-    if platforms is None:
-        platforms = ["twitter", "linkedin", "newsletter"]
-
-    # Filter to supported platforms only
-    valid_platforms = [p for p in platforms if p in PLATFORM_CONSTRAINTS]
-    unsupported = [p for p in platforms if p not in PLATFORM_CONSTRAINTS]
-    if unsupported:
-        logger.warning("Unsupported platforms ignored: %s", unsupported)
-
-    voice_str = voice.to_prompt_str()
-
-    # Run all platforms in parallel
-    tasks = [_generate_for_platform(voice_str, topic, p) for p in valid_platforms]
-    task_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    results: dict[str, GeneratedContent] = {}
-    errors: dict[str, str] = {}
-
-    for platform, result in zip(valid_platforms, task_results):
-        if isinstance(result, Exception):
-            logger.error("Failed to generate %s content: %s", platform, result)
-            errors[platform] = str(result)
+        if stricter and profile is not None:
+            prompt = self._build_stricter_prompt(voice_str, topic, platform, profile)
         else:
-            plat, content, corrected = result
-            results[plat] = GeneratedContent(
-                platform=plat,
-                content=content,
-                self_corrected=corrected,
+            prompt = self._build_prompt(voice_str, topic, platform)
+
+        get_llm_client, GenerateContentConfig, generate_content_with_retry = _get_llm()
+        client = get_llm_client()
+
+        resp = await generate_content_with_retry(
+            client=client,
+            contents=prompt,
+            config=GenerateContentConfig(
+                system_instruction=system,
+                temperature=0.85 if not stricter else 0.75,
+                top_p=0.95,
+            ),
+        )
+        return (resp.text or "").strip()
+
+    async def _generate_for_platform(
+        self,
+        voice: "VoiceProfile",
+        topic: str,
+        platform: str,
+    ) -> "GeneratedPlatformContent":
+        """
+        Generate content for a single platform with the validation retry loop.
+
+        Attempts up to MAX_REGENERATION_ATTEMPTS regenerations if the draft
+        fails the quality gate. After that, returns the best version with
+        manual review flagged.
+        """
+        from agent.models import GeneratedPlatformContent, ValidationResult
+        from agent.quality_gate import QualityGate
+        from agent.config import MAX_REGENERATION_ATTEMPTS, AUTHENTICITY_PASS_THRESHOLD
+
+        gate = QualityGate()
+        voice_str = voice.to_prompt_str()
+
+        best_text = ""
+        best_validation: ValidationResult | None = None
+        regen_count = 0
+
+        for attempt in range(MAX_REGENERATION_ATTEMPTS + 1):
+            stricter = attempt > 0
+            logger.info(
+                "Generating %s content (attempt %d/%d)%s",
+                platform.upper(),
+                attempt + 1,
+                MAX_REGENERATION_ATTEMPTS + 1,
+                " [STRICTER]" if stricter else "",
             )
 
-    return ContentBundle(
-        topic=topic,
-        voice_profile=voice,
-        results=results,
-        errors=errors,
-    )
+            text = await self._generate_raw(
+                voice_str, topic, platform,
+                stricter=stricter, profile=voice if stricter else None,
+            )
+
+            if not text:
+                logger.warning("Empty response from LLM for %s attempt %d", platform, attempt + 1)
+                continue
+
+            validation = await gate.validate_platform_content(text, voice, platform)
+            best_text = text
+            best_validation = validation
+
+            if not validation.needs_regeneration:
+                logger.info(
+                    "%s passed quality gate on attempt %d (score: %.1f)",
+                    platform.upper(), attempt + 1, validation.authenticity_score,
+                )
+                break
+
+            if attempt < MAX_REGENERATION_ATTEMPTS:
+                regen_count += 1
+                logger.info(
+                    "%s failed quality gate (score: %.1f, buzzwords: %s) — regenerating…",
+                    platform.upper(),
+                    validation.authenticity_score,
+                    validation.has_buzzwords,
+                )
+        else:
+            logger.warning(
+                "%s still failing after %d attempts — flagging for manual review.",
+                platform.upper(),
+                MAX_REGENERATION_ATTEMPTS + 1,
+            )
+            if best_validation:
+                # Force manual review flag
+                best_validation.needs_manual_review = True
+
+        return GeneratedPlatformContent(
+            text=best_text,
+            validation=best_validation,
+            regeneration_count=regen_count,
+        )
+
+    async def generate(
+        self,
+        voice: "VoiceProfile",
+        topic: str,
+        platforms: list[str] | None = None,
+    ) -> "ContentBundle":
+        """
+        Async: Generate and validate multi-platform content.
+
+        Args:
+            voice:     VoiceProfile from VoiceExtractor
+            topic:     The subject/update to generate content about
+            platforms: Target platforms (default: linkedin, twitter, newsletter)
+
+        Returns:
+            ContentBundle with validated per-platform content + quality report
+        """
+        from agent.models import ContentBundle
+        from agent.quality_gate import QualityGate
+        from agent.prompts import PLATFORM_CONSTRAINTS
+
+        if platforms is None:
+            platforms = ["linkedin", "twitter", "newsletter"]
+
+        valid_platforms = [p for p in platforms if p in PLATFORM_CONSTRAINTS]
+        if skipped := [p for p in platforms if p not in PLATFORM_CONSTRAINTS]:
+            logger.warning("Skipping unsupported platforms: %s", skipped)
+
+        # Generate all platforms in parallel
+        tasks = {p: self._generate_for_platform(voice, topic, p) for p in valid_platforms}
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        platform_content: dict[str, "GeneratedPlatformContent"] = {}
+
+        for platform, result in zip(tasks.keys(), results):
+            if isinstance(result, Exception):
+                logger.error("Platform %s generation failed: %s", platform, result)
+            else:
+                platform_content[platform] = result
+
+        # Stage 2: consistency check (only if we have all 3 main platforms)
+        gate = QualityGate()
+        consistency = await gate.check_consistency(
+            linkedin_text=platform_content.get("linkedin", _empty()).text,
+            twitter_text=platform_content.get("twitter", _empty()).text,
+            newsletter_text=platform_content.get("newsletter", _empty()).text,
+            profile=voice,
+        )
+
+        # Stage 3: quality report
+        validations = {
+            p: c.validation
+            for p, c in platform_content.items()
+            if c.validation is not None
+        }
+        quality_report = gate.build_quality_report(validations, consistency)
+
+        return ContentBundle(
+            new_content=topic,
+            voice_profile=voice,
+            linkedin=platform_content.get("linkedin"),
+            twitter=platform_content.get("twitter"),
+            newsletter=platform_content.get("newsletter"),
+            quality_report=quality_report,
+        )
+
+    def generate_sync(
+        self,
+        voice: "VoiceProfile",
+        topic: str,
+        platforms: list[str] | None = None,
+    ) -> "ContentBundle":
+        """Sync wrapper — for CLI scripts."""
+        return asyncio.run(self.generate(voice=voice, topic=topic, platforms=platforms))
+
+
+def _empty():
+    """Return an empty GeneratedPlatformContent for missing platforms in consistency check."""
+    from agent.models import GeneratedPlatformContent
+    return GeneratedPlatformContent(text="[not generated]")
+
+
+# ─── Backward-compat module-level functions ────────────────────────────────────
+
+async def generate_content(
+    voice: "VoiceProfile",
+    topic: str,
+    platforms: list[str] | None = None,
+) -> "ContentBundle":
+    return await ContentGenerator().generate(voice=voice, topic=topic, platforms=platforms)
 
 
 def generate_content_sync(
-    voice: "VoiceProfile",  # noqa: F821
+    voice: "VoiceProfile",
     topic: str,
     platforms: list[str] | None = None,
-) -> "ContentBundle":  # noqa: F821
-    """
-    Sync wrapper around generate_content — for use in CLI scripts.
-    """
-    return asyncio.run(generate_content(voice=voice, topic=topic, platforms=platforms))
+) -> "ContentBundle":
+    return ContentGenerator().generate_sync(voice=voice, topic=topic, platforms=platforms)

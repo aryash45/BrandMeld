@@ -20,6 +20,10 @@ import json
 import logging
 import os
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.models import VoiceProfile
 
 logger = logging.getLogger(__name__)
 
