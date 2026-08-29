@@ -1,32 +1,25 @@
-# BrandMeld Backend Dependencies
+# BrandMeld Backend — Agentic Architecture (Feature 1)
 
 # Web Framework
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.6
 
-# LLM client requires httpx, which is already listed below
-
-# JWT validation for Supabase auth middleware
-PyJWT>=2.8.0
+# LLM client (NVIDIA NIM API)
+httpx>=0.27.0
 
 # Database
 supabase>=2.0.0
 
-# Web Automation (brand discovery)
-playwright>=1.40.0
+# JWT
+PyJWT>=2.8.0
 
-# HTTP client — LinkedIn API calls, platform API calls
-httpx>=0.27.0
-
-# Token encryption — connected_accounts OAuth tokens
-cryptography>=42.0.0
-
-# Background scheduler — weekly prompts (dev); Cloud Scheduler handles prod
-APScheduler>=3.10.4
-
-# Rate limiting
-slowapi>=0.1.9
-
-# Utilities
+# Environment
 python-dotenv==1.0.1
+
+# Evals + testing
+pytest>=7.0.0
+pytest-asyncio>=0.23.0
+
+# Structured logging (eval reports)
+python-json-logger>=2.0.0
