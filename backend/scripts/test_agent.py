@@ -37,6 +37,12 @@ import os
 import sys
 import time
 
+# Force UTF-8 output on Windows so emoji characters don't crash the terminal
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr.reconfigure(encoding="utf-8")
+
 # ── Path setup ─────────────────────────────────────────────────────────────────
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_ROOT not in sys.path:

@@ -204,25 +204,35 @@ class Evaluator:
                 "input": "Shipping beats perfecting. We launched v2. We were wrong about "
                          "the pricing model. Real impact: 200 new users in a week.",
                 "min_required": 2,
+                # Positive test: good content should meet the threshold
+                "expect_pass": True,
             },
             {
-                "name": "Post with zero signature phrases",
+                "name": "Post with zero signature phrases (gate should reject)",
                 "input": "Our new feature allows users to export data asynchronously. "
                          "This improves the overall workflow experience significantly.",
                 "min_required": 2,
+                # Negative test: bad content should be rejected by the gate (found < min)
+                "expect_pass": False,
             },
             {
                 "name": "Post with one phrase (marginal)",
                 "input": "Real impact from this feature: 40% fewer support tickets. "
                          "Users asked for it. We built it. Took 3 weeks.",
                 "min_required": 1,
+                # Positive test: one phrase is enough when min_required=1
+                "expect_pass": True,
             },
         ]
 
         results = []
         for tc in test_cases:
             found = gate.check_signature_phrases(tc["input"], phrases)
-            passed = len(found) >= tc["min_required"]
+            gate_passes = len(found) >= tc["min_required"]
+            # The eval passes when the gate result matches what we expect:
+            # - positive tests: gate should accept (gate_passes == True)
+            # - negative tests: gate should reject (gate_passes == False)
+            passed = gate_passes == tc["expect_pass"]
             results.append({
                 "name": tc["name"],
                 "passed": passed,
@@ -303,16 +313,21 @@ class Evaluator:
         from agent.quality_gate import QualityGate
         gate = QualityGate()
 
-        # Sample LinkedIn post (~900 chars)
+        # Sample LinkedIn post (>800 chars — must meet min_chars threshold)
         linkedin_sample = (
             "We were wrong about our onboarding flow.\n\n"
             "We built a 7-step wizard because investors expected 'polish.' "
-            "Users were dropping off at step 3.\n\n"
-            "So we killed 4 steps. No A/B test. Just deleted them.\n\n"
-            "Onboarding went from 11 minutes to 4. Conversion up 34% in 2 weeks.\n\n"
+            "Users were dropping off at step 3. Not step 6. Not step 7. Step 3.\n\n"
+            "So we killed 4 steps. No A/B test. No committee. Just deleted them on a Tuesday.\n\n"
+            "Onboarding went from 11 minutes to 4. Conversion up 34% in 2 weeks. "
+            "We shipped the simplified version in 3 days. "
+            "The old version took 6 weeks and a full design sprint.\n\n"
             "The lesson: don't build for the demo. Build for the user who's half-distracted "
-            "and just wants to get to their first win.\n\n"
-            "What's the most over-engineered thing your team has shipped?\n\n"
+            "and just wants to get to their first win as fast as possible.\n\n"
+            "We were wrong about what 'polished' means. Polish isn't extra steps — "
+            "it's removing the friction nobody asked for. Every step we removed was a "
+            "conversion we recovered.\n\n"
+            "Shipping beats perfecting. Always profile the user journey before adding to it.\n\n"
             "#ProductDesign #StartupLessons #BuildingInPublic"
         )
 
@@ -326,11 +341,11 @@ class Evaluator:
             "6/ Shipping beats perfecting. Always ask: what can we remove?"
         )
 
-        # Sample newsletter (~420 words — abbreviated here for the eval)
+        # Sample newsletter (>400 words — must meet min_words threshold)
         newsletter_words = (
-            "Six months ago we thought we'd nailed our onboarding. " * 20
-            + "The lesson: remove before you add. " * 20
-            + "Ask your users, not your investors. " * 10
+            "Six months ago we thought we'd nailed our onboarding. " * 25
+            + "The lesson: remove before you add, not after. " * 25
+            + "Ask your users early, not your investors late. " * 10
         )
 
         test_cases = [
