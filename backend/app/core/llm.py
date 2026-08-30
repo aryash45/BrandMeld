@@ -16,7 +16,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_ID = "nvidia/llama-3.1-nemotron-70b-instruct"
+DEFAULT_MODEL_ID = "meta/llama-3.2-11b-vision-instruct"
 LLM_RETRY_DELAYS = (1.0, 2.0, 4.0)
 
 
@@ -28,8 +28,6 @@ def get_api_key() -> str:
 
 
 def get_model_id(has_image: bool = False) -> str:
-    if has_image:
-        return "meta/llama-3.2-11b-vision-instruct"
     env_model = os.getenv("NVIDIA_MODEL_ID")
     if env_model:
         return env_model
