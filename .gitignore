@@ -65,3 +65,6 @@ dist-ssr
 # Testing
 coverage/
 .nyc_output/
+
+# Rust
+backend-rs/target/

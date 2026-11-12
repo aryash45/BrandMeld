@@ -2,15 +2,47 @@
   <img src="./assets/Logo.png" alt="BrandMeld Logo" width="400" />
 </div>
 
-# BrandMeld — The Distribution Engine for Founders
+# BrandMeld — Release-to-Revenue Intelligence
 
 > **"Distribution is the #1 startup killer. Better product loses to better distribution, every single time."**
 
-BrandMeld is not an AI writing tool — it's a **systematic distribution engine** for founders and product owners. Every week, it turns your raw product updates, milestones, and insights into a coordinated multi-channel distribution event — LinkedIn, X, and newsletter — in your authentic brand voice. Founders who distribute consistently win. BrandMeld is the system.
+BrandMeld is evolving from a founder distribution engine into a **release-to-revenue system for product-led B2B software**. It starts by turning a meaningful product signal into an approved distribution campaign, then expands toward release impact, customer adoption, migrations, and measurable revenue outcomes.
+
+The product is intentionally being built in stages: the initial workflow validates signal analysis and human-approved actions; the later release-intelligence workflow will ingest GitHub releases, documentation changes, product analytics, and support context.
 
 <div align="center">
   <img src="./assets/Dashboard.png" alt="BrandMeld Dashboard" width="800" />
 </div>
+
+---
+
+## 🎯 Product Direction
+
+### Initial workflow
+
+```text
+Signal → Context → Recommendation → Human approval → Action → Outcome
+```
+
+The first vertical slice accepts a manual product or release signal, analyzes its likely customer impact, and produces evidence-backed recommendations. External actions remain behind an explicit approval gate.
+
+### Target product
+
+```text
+Release → Affected users/accounts → Migration or adoption action → Measured outcome
+```
+
+The initial market is product-led B2B software that ships frequently and has measurable adoption: SaaS, API products, developer tools, infrastructure, data, AI, and security products. The first beachhead is technical products with documentation, changelogs, and recurring releases.
+
+### Current implementation status
+
+- ✅ Rust backend foundation with modular health/readiness routes
+- ⏳ Signal domain model and analysis workflow
+- ⏳ Next.js frontend dashboard
+- ⏳ GitHub, changelog, product analytics, and support integrations
+- ⏳ Release impact and adoption tracking
+
+The repository currently contains the legacy Python backend and the new Rust service foundation. The frontend is planned as a separate implementation slice.
 
 ---
 
@@ -78,27 +110,22 @@ BrandMeld-CloudRunHackathon/
 │   │   └── main.py
 │   ├── database/schema.sql       # Full Supabase schema (RLS, oauth_state table)
 │   └── requirements.txt
-└── frontend/                     # React + Vite + TypeScript
-    └── src/
-        ├── components/
-        │   ├── DistributionStats.tsx   # Weekly stats strip (Signal page)
-        │   └── DistributeModal.tsx     # Multi-channel distribute modal
-        ├── hooks/
-        │   └── useConnectedAccounts.ts # Social connection state management
-        ├── layout/
-        │   └── Sidebar.tsx             # Distribution Engine nav (Signal/Draft/Refine/Distribute/Measure)
-        ├── pages/
-        │   ├── DashboardPage.tsx       # SSE streaming generation + DistributeModal
-        │   ├── DiscoverPage.tsx        # Signal cards + DistributionStats strip
-        │   ├── SettingsPageNew.tsx     # Settings hub (Brand/Connections/Marketplace/Account)
-        │   └── PublishPage.tsx         # Connected accounts + publish history
-        └── services/
-            └── apiService.ts           # Social connection CRUD + publishing methods
+├── backend-rs/                    # New Rust API boundary
+│   ├── Cargo.toml
+│   └── src/
+│       ├── config.rs              # Environment-backed service configuration
+│       ├── error.rs               # Typed configuration errors
+│       ├── main.rs                # Small application bootstrap
+│       └── http/
+│           └── health.rs          # /health and /ready endpoints
+└── frontend/                     # Planned Next.js + TypeScript dashboard
 ```
 
 ---
 
 ## 📡 API Reference
+
+The `/v1` endpoints below describe the legacy distribution-engine API and remain available during the migration. New release-intelligence endpoints will be introduced under `/v2` in the Rust service once the signal domain slice is implemented.
 
 All endpoints require `Authorization: Bearer <supabase_jwt>` (user_id always derived from JWT, never from request body).
 
