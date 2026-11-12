@@ -1,0 +1,359 @@
+{
+  "eval_timestamp": "2026-08-30T08:14:47.026827+00:00",
+  "evals_run": 7,
+  "results": {
+    "eval_1_anti_slop_detection": {
+      "eval_id": "eval_1",
+      "eval_name": "Anti-Slop Detection (Buzzword Blacklist)",
+      "status": "PASS",
+      "score": 10.0,
+      "details": "5/5 test cases passed.",
+      "test_cases": [
+        {
+          "name": "Clean founder post",
+          "passed": true,
+          "found_buzzwords": [],
+          "expected_buzzwords": [],
+          "notes": "Found: [] (expected: none)"
+        },
+        {
+          "name": "Obvious corporate slop",
+          "passed": true,
+          "found_buzzwords": [
+            "innovation",
+            "paradigm-shifting",
+            "empower",
+            "revolutionize",
+            "ecosystem",
+            "delighted to announce"
+          ],
+          "expected_buzzwords": [
+            "revolutionize",
+            "ecosystem",
+            "empower"
+          ],
+          "notes": "Found: ['innovation', 'paradigm-shifting', 'empower', 'revolutionize', 'ecosystem', 'delighted to announce'] | Expected to catch: ['revolutionize', 'ecosystem', 'empower']"
+        },
+        {
+          "name": "Subtle buzzwords",
+          "passed": true,
+          "found_buzzwords": [
+            "leveraged",
+            "cutting-edge",
+            "seamless"
+          ],
+          "expected_buzzwords": [
+            "leverage",
+            "cutting-edge",
+            "seamless"
+          ],
+          "notes": "Found: ['leveraged', 'cutting-edge', 'seamless'] | Expected to catch: ['leverage', 'cutting-edge', 'seamless']"
+        },
+        {
+          "name": "Excited to share opener",
+          "passed": true,
+          "found_buzzwords": [
+            "excited to share"
+          ],
+          "expected_buzzwords": [
+            "excited to share"
+          ],
+          "notes": "Found: ['excited to share'] | Expected to catch: ['excited to share']"
+        },
+        {
+          "name": "Buzzword-free metric post",
+          "passed": true,
+          "found_buzzwords": [],
+          "expected_buzzwords": [],
+          "notes": "Found: [] (expected: none)"
+        }
+      ],
+      "passed_count": 5,
+      "failed_count": 0,
+      "skipped_count": 0
+    },
+    "eval_2_signature_phrases": {
+      "eval_id": "eval_2",
+      "eval_name": "Signature Phrase Usage",
+      "status": "PASS",
+      "score": 10.0,
+      "details": "3/3 test cases passed.",
+      "test_cases": [
+        {
+          "name": "Post uses multiple signature phrases",
+          "passed": true,
+          "signature_phrases_found": [
+            "shipping beats perfecting",
+            "we were wrong about",
+            "real impact"
+          ],
+          "phrases_found_count": 3,
+          "min_required": 2,
+          "notes": "Found 3/2 required."
+        },
+        {
+          "name": "Post with zero signature phrases (gate should reject)",
+          "passed": true,
+          "signature_phrases_found": [],
+          "phrases_found_count": 0,
+          "min_required": 2,
+          "notes": "Found 0/2 required."
+        },
+        {
+          "name": "Post with one phrase (marginal)",
+          "passed": true,
+          "signature_phrases_found": [
+            "real impact"
+          ],
+          "phrases_found_count": 1,
+          "min_required": 1,
+          "notes": "Found 1/1 required."
+        }
+      ],
+      "passed_count": 3,
+      "failed_count": 0,
+      "skipped_count": 0
+    },
+    "eval_3_specificity": {
+      "eval_id": "eval_3",
+      "eval_name": "Specificity Check",
+      "status": "PASS",
+      "score": 10.0,
+      "details": "4/4 test cases passed.",
+      "test_cases": [
+        {
+          "name": "High-specificity post (numbers, timeframes)",
+          "passed": true,
+          "specificity_level": "high",
+          "expected_level": "high",
+          "notes": "Got 'high', expected 'high'"
+        },
+        {
+          "name": "Low-specificity post (vague)",
+          "passed": true,
+          "specificity_level": "low",
+          "expected_level": "low",
+          "notes": "Got 'low', expected 'low'"
+        },
+        {
+          "name": "Medium-specificity post (some details)",
+          "passed": true,
+          "specificity_level": "high",
+          "expected_level": "medium",
+          "notes": "Got 'high', expected 'medium'"
+        },
+        {
+          "name": "Version numbers count as specifics",
+          "passed": true,
+          "specificity_level": "high",
+          "expected_level": "high",
+          "notes": "Got 'high', expected 'high'"
+        }
+      ],
+      "passed_count": 4,
+      "failed_count": 0,
+      "skipped_count": 0
+    },
+    "eval_4_platform_format": {
+      "eval_id": "eval_4",
+      "eval_name": "Platform Format Validation",
+      "status": "PASS",
+      "score": 10.0,
+      "details": "5/5 test cases passed.",
+      "test_cases": [
+        {
+          "name": "LinkedIn: correct length",
+          "passed": true,
+          "format_ok": true,
+          "expected_ok": true,
+          "issues": [],
+          "passes": [
+            "Character count OK: 863"
+          ]
+        },
+        {
+          "name": "LinkedIn: too short",
+          "passed": true,
+          "format_ok": false,
+          "expected_ok": false,
+          "issues": [
+            "Too short: 32 chars (min 800)"
+          ],
+          "passes": []
+        },
+        {
+          "name": "Twitter: correct thread format",
+          "passed": true,
+          "format_ok": true,
+          "expected_ok": true,
+          "issues": [],
+          "passes": [
+            "Tweet count OK: 6"
+          ]
+        },
+        {
+          "name": "Twitter: no tweet numbering",
+          "passed": true,
+          "format_ok": false,
+          "expected_ok": false,
+          "issues": [
+            "Too few tweets: 0 (min 3)"
+          ],
+          "passes": []
+        },
+        {
+          "name": "Newsletter: correct word count",
+          "passed": true,
+          "format_ok": true,
+          "expected_ok": true,
+          "issues": [],
+          "passes": [
+            "Word count OK: 505"
+          ]
+        }
+      ],
+      "passed_count": 5,
+      "failed_count": 0,
+      "skipped_count": 0
+    },
+    "eval_5_negative_testing": {
+      "eval_id": "eval_5",
+      "eval_name": "Negative Testing (Slop Detection)",
+      "status": "PASS",
+      "score": 10.0,
+      "details": "5/5 test cases passed.",
+      "test_cases": [
+        {
+          "name": "Extreme corporate slop",
+          "passed": true,
+          "buzzwords_caught": [
+            "innovation",
+            "paradigm-shifting",
+            "delighted to announce"
+          ],
+          "specificity_detected": "low",
+          "notes": "Buzzwords caught: False | Specificity low: True"
+        },
+        {
+          "name": "Buzzword overload",
+          "passed": true,
+          "buzzwords_caught": [
+            "empower",
+            "revolutionize",
+            "leveraging",
+            "ecosystem",
+            "synergistic",
+            "cutting-edge"
+          ],
+          "specificity_detected": "low",
+          "notes": "Buzzwords caught: True | Specificity low: True"
+        },
+        {
+          "name": "Generic AI content",
+          "passed": true,
+          "buzzwords_caught": [
+            "thrilled to share"
+          ],
+          "specificity_detected": "low",
+          "notes": "Buzzwords caught: True | Specificity low: True"
+        },
+        {
+          "name": "Vague claims without specifics",
+          "passed": true,
+          "buzzwords_caught": [
+            "game-changing"
+          ],
+          "specificity_detected": "low",
+          "notes": "Buzzwords caught: True | Specificity low: True"
+        },
+        {
+          "name": "Excited opener",
+          "passed": true,
+          "buzzwords_caught": [
+            "excited to share"
+          ],
+          "specificity_detected": "low",
+          "notes": "Buzzwords caught: True | Specificity low: True"
+        }
+      ],
+      "passed_count": 5,
+      "failed_count": 0,
+      "skipped_count": 0
+    },
+    "eval_6_authenticity_scoring": {
+      "eval_id": "eval_6",
+      "eval_name": "Authenticity Scoring (LLM)",
+      "status": "PASS",
+      "score": 10.0,
+      "details": "3/3 test cases passed.",
+      "test_cases": [
+        {
+          "name": "High-authenticity post (should score 8-10)",
+          "passed": true,
+          "authenticity_score": 9.0,
+          "expected_range": "7.0-10.0",
+          "red_flags": [],
+          "notes": "Score 9.0 in expected range"
+        },
+        {
+          "name": "Corporate slop (should score 1-4)",
+          "passed": true,
+          "authenticity_score": 2.0,
+          "expected_range": "1.0-4.0",
+          "red_flags": [
+            "use of banned phrases",
+            "excited to announce",
+            "groundbreaking"
+          ],
+          "notes": "Score 2.0 in expected range"
+        },
+        {
+          "name": "Marginal post (should score 5-7)",
+          "passed": true,
+          "authenticity_score": 4.0,
+          "expected_range": "4.0-8.0",
+          "red_flags": [
+            "Lack of signature phrases",
+            "No specific numbers or timeframes",
+            "No 'we were wrong about' structure"
+          ],
+          "notes": "Score 4.0 in expected range"
+        }
+      ],
+      "passed_count": 3,
+      "failed_count": 0,
+      "skipped_count": 0
+    },
+    "eval_7_voice_consistency": {
+      "eval_id": "eval_7",
+      "eval_name": "Voice Consistency (Cross-Platform, LLM)",
+      "status": "PASS",
+      "score": 10.0,
+      "details": "2/2 test cases passed.",
+      "test_cases": [
+        {
+          "name": "Consistent set \u2014 should score \u2265 7",
+          "passed": true,
+          "consistency_score": 9.0,
+          "sounds_same_person": true,
+          "notes": "The three versions of content are highly consistent in terms of tone, language, and structure, showc"
+        },
+        {
+          "name": "Inconsistent set (corporate newsletter) \u2014 should flag",
+          "passed": true,
+          "consistency_score": 5.0,
+          "sounds_same_person": false,
+          "notes": "The LinkedIn and Twitter versions show some consistency with the voice profile, but the newsletter v"
+        }
+      ],
+      "passed_count": 2,
+      "failed_count": 0,
+      "skipped_count": 0
+    }
+  },
+  "overall_status": "PASS",
+  "overall_score": 10.0,
+  "summary": "ALL EVALS PASS. Overall score: 10.0/10. Rule-based: 5 evals. LLM: 2 evals.",
+  "api_calls_made": 5,
+  "total_time_seconds": 39.49
+}

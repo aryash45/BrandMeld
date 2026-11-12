@@ -42,7 +42,7 @@ The initial market is product-led B2B software that ships frequently and has mea
 - ⏳ GitHub, changelog, product analytics, and support integrations
 - ⏳ Release impact and adoption tracking
 
-The repository currently contains the legacy Python backend and the new Rust service foundation. The frontend is planned as a separate implementation slice.
+The legacy Python implementation is archived under `legacy/backend-python/`. The active backend direction is the Rust service foundation, and the frontend is planned as a separate implementation slice.
 
 ---
 
@@ -94,7 +94,7 @@ The Signal page now shows your weekly distribution dashboard at a glance: posts 
 
 ```
 BrandMeld-CloudRunHackathon/
-├── backend/                      # Python FastAPI (Cloud Run)
+├── legacy/backend-python/        # Archived Python FastAPI implementation
 │   ├── app/
 │   │   ├── core/
 │   │   │   ├── llm.py            # NVIDIA NIM client factory + retry helper
@@ -125,7 +125,7 @@ BrandMeld-CloudRunHackathon/
 
 ## 📡 API Reference
 
-The `/v1` endpoints below describe the legacy distribution-engine API and remain available during the migration. New release-intelligence endpoints will be introduced under `/v2` in the Rust service once the signal domain slice is implemented.
+The `/v1` endpoints below describe the archived distribution-engine API for reference. They are not part of the active runtime. New release-intelligence endpoints will be introduced under `/v2` in the Rust service once the signal domain slice is implemented.
 
 All endpoints require `Authorization: Bearer <supabase_jwt>` (user_id always derived from JWT, never from request body).
 
@@ -168,7 +168,7 @@ All endpoints require `Authorization: Bearer <supabase_jwt>` (user_id always der
 
 ### Environment Variables
 
-**`backend/.env`**
+**`legacy/backend-python/.env`**
 ```env
 # NVIDIA NIM (required for all AI features)
 NVIDIA_API_KEY=nvapi-...
@@ -199,7 +199,7 @@ VITE_SUPABASE_ANON_KEY=your_anon_key
 
 ### Database Setup
 
-Run [schema.sql](./backend/database/schema.sql) in your Supabase SQL editor. Includes:
+Run [schema.sql](./legacy/backend-python/database/schema.sql) in your Supabase SQL editor. Includes:
 - `brand_dna` — extracted brand voice per user
 - `autopilot_drafts` — all generated posts with signal metadata
 - `published_posts` — distribution history per channel
@@ -211,7 +211,7 @@ Run [schema.sql](./backend/database/schema.sql) in your Supabase SQL editor. Inc
 
 ```bash
 # Backend
-cd backend
+cd legacy/backend-python
 python -m venv .venv
 .venv\Scripts\activate       # Windows
 pip install -r requirements.txt
@@ -240,7 +240,7 @@ Requires `gcloud` CLI installed and authenticated to your GCP project.
 ## 🧪 Tests
 
 ```bash
-cd backend
+cd legacy/backend-python
 python -m pytest tests/ -v
 # → 25 passed
 ```
