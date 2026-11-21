@@ -116,8 +116,12 @@ BrandMeld-CloudRunHackathon/
 │       ├── config.rs              # Environment-backed service configuration
 │       ├── error.rs               # Typed configuration errors
 │       ├── main.rs                # Small application bootstrap
+│       ├── state.rs               # First-slice in-memory state
+│       ├── domain/                # Signals and classification contracts
 │       └── http/
-│           └── health.rs          # /health and /ready endpoints
+│           ├── auth.rs            # Bearer token protection
+│           ├── health.rs          # /health and /ready endpoints
+│           └── signals.rs         # /v2 signal and classification routes
 └── frontend/                     # Planned Next.js + TypeScript dashboard
 ```
 
@@ -125,7 +129,18 @@ BrandMeld-CloudRunHackathon/
 
 ## 📡 API Reference
 
-The `/v1` endpoints below describe the archived distribution-engine API for reference. They are not part of the active runtime. New release-intelligence endpoints will be introduced under `/v2` in the Rust service once the signal domain slice is implemented.
+The `/v1` endpoints below describe the archived distribution-engine API for reference. They are not part of the active runtime. The first release-intelligence endpoints are now available under `/v2` in the Rust service.
+
+### Active Rust signal API
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v2/signals` | Create a validated signal |
+| `GET` | `/v2/signals/{id}` | Read a signal |
+| `POST` | `/v2/signals/{id}/classify` | Classify a signal with evidence and confidence |
+| `POST` | `/v2/signals/mock-github-release` | Create a development fixture |
+
+These routes require `Authorization: Bearer <BRANDMELD_API_TOKEN>`.
 
 All endpoints require `Authorization: Bearer <supabase_jwt>` (user_id always derived from JWT, never from request body).
 
@@ -209,6 +224,19 @@ Run [schema.sql](./legacy/backend-python/database/schema.sql) in your Supabase S
 
 ### Run Locally
 
+**Active Rust API:**
+
+```powershell
+cd backend-rs
+$env:BRANDMELD_API_TOKEN = "local-dev-token"
+cargo run
+# → http://127.0.0.1:8081
+```
+
+Signal routes require `Authorization: Bearer local-dev-token`.
+
+The Python commands below run the archived implementation only.
+
 ```bash
 # Backend
 cd legacy/backend-python
@@ -226,23 +254,26 @@ npm run dev
 
 ---
 
-## ☁️ Deploy to Cloud Run
+## ☁️ Deployment
 
-```powershell
-# From repo root
-.\deploy.ps1
-```
-
-Requires `gcloud` CLI installed and authenticated to your GCP project.
+The Rust service now supports Cloud Run’s `PORT` variable and binds to
+`0.0.0.0`, but a Rust container and deployment script are not added yet.
 
 ---
 
 ## 🧪 Tests
 
 ```bash
+cd backend-rs
+cargo fmt --check
+cargo test
+```
+
+The archived Python test suite can still be run separately:
+
+```bash
 cd legacy/backend-python
 python -m pytest tests/ -v
-# → 25 passed
 ```
 
 ---
