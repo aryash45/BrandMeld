@@ -43,6 +43,22 @@ pub struct CreateSignalRequest {
 }
 
 impl CreateSignalRequest {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.title.trim().is_empty() {
+            return Err("title must not be empty");
+        }
+        if self.body.trim().is_empty() {
+            return Err("body must not be empty");
+        }
+        if self.title.len() > 500 {
+            return Err("title must be 500 bytes or fewer");
+        }
+        if self.body.len() > 50_000 {
+            return Err("body must be 50,000 bytes or fewer");
+        }
+        Ok(())
+    }
+
     pub fn into_signal(self) -> Signal {
         Signal {
             id: Uuid::new_v4(),
@@ -84,5 +100,19 @@ mod tests {
         assert_eq!(signal.repository.as_deref(), Some("acme/payments-api"));
         assert_eq!(signal.version.as_deref(), Some("v2.3.0"));
         assert!(!signal.id.is_nil());
+    }
+
+    #[test]
+    fn rejects_empty_signal_text() {
+        let request = CreateSignalRequest {
+            source: SignalSource::Manual,
+            kind: SignalKind::NewRelease,
+            title: " ".to_owned(),
+            body: "Release notes".to_owned(),
+            repository: None,
+            version: None,
+        };
+
+        assert_eq!(request.validate(), Err("title must not be empty"));
     }
 }
